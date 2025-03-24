@@ -2,12 +2,15 @@
 Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined computer use tools.
 """
 
+import json
+import os
 import platform
 from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, cast
+from typing import Any, Optional, cast
 
+import aiomysql
 import httpx
 from anthropic import (
     Anthropic,
@@ -62,12 +65,118 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.  Either that, or make sure you scroll down to see everything before deciding something isn't available.
 * When using your computer function calls, they take a while to run and send back to you.  Where possible/feasible, try to chain multiple of these calls all into one function calls request.
 * The current date is {datetime.today().strftime('%A, %B %-d, %Y')}.
+* Always look into the the /home/computeruse/chat-tools directory and go through the list of txt file as it contains information of the tool and the URL to access the tool. You will read through the content of each tools to determine if the tool can be used to solve the task on hand. Tools inside this directory are accessible via the URL provided in the txt file. You must open the URL in Firefox to access the tool.
+* When you're given a file name to work with, you will look into the /home/computeruse/files directory to find it and work with it.
+* If you need any credentials for any service, you will first look into the /home/computeruse/credentials directory and find the appropriate json file. Each of the json files will have the necessary credentials and the file name will be the service name.
+* If you were asked to run or execute any tools, you will first look into the /home/computeruse/tools directory to find it. Each of the tools will have its own Readme file. Only when you cannot find a tool that is suitable for the task at hand, you will then create your own tool.
+* If you were tasked to create a new tool, you must make sure all tools created are stored in the /home/computeruse/tools directory with their own directory. Each tool directory will have the necessary files to run the tool and it must have a Readme.md file. The Readme.md file will have the necessary information about the tool and how to run it. The tool's direction name will be the tool's name. Naming convention for the tool's directory is lowercase with underscores.
 </SYSTEM_CAPABILITY>
 
 <IMPORTANT>
 * When using Firefox, if a startup wizard appears, IGNORE IT.  Do not even click "skip this step".  Instead, click on the address bar where it says "Search or enter address", and enter the appropriate search term or URL there.
 * If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your StrReplaceEditTool.
 </IMPORTANT>"""
+
+
+class ConversationStore:
+    def __init__(self, pool: aiomysql.Pool):
+        self.pool = pool
+
+    @staticmethod
+    async def create(
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        user: Optional[str] = None,
+        password: Optional[str] = None,
+        db: Optional[str] = None,
+    ):
+        """
+        Create a ConversationStore instance with either provided parameters or environment variables.
+        """
+        connection_params = {
+            "host": host or os.getenv("DB_HOST", "localhost"),
+            "port": port or int(os.getenv("DB_PORT", "3306")),
+            "user": user or os.getenv("DB_USER", "root"),
+            "password": password or os.getenv("DB_PASSWORD", ""),
+            "db": db or os.getenv("DB_NAME", "multiai"),
+            "autocommit": True,
+        }
+
+        try:
+            pool = await aiomysql.create_pool(**connection_params)
+            return ConversationStore(pool)
+        except Exception as e:
+            raise ConnectionError(f"Failed to connect to MySQL: {str(e)}") from e
+
+    async def create_conversation(self, model: str, conv_type: str) -> int:
+        """Create a new conversation record and return its ID"""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO computer_use_chats (
+                        name, type, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s)
+                """,
+                    (
+                        model,
+                        conv_type,
+                        datetime.utcnow(),
+                        datetime.utcnow(),
+                    ),
+                )
+                await conn.commit()
+                # Get the auto-generated ID
+                conversation_id = cur.lastrowid
+                return conversation_id
+
+    async def store_message(
+        self,
+        conversation_id: int,
+        role: str,
+        content: str,
+        raw_content: str,
+        tool_id: Optional[str] = None,
+        is_error: bool = False,
+        image_data: Optional[str] = None,
+    ):
+        """Store a message associated with a conversation"""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO computer_use_chat_messages (
+                        computer_use_chat_id, role, content, tool_id,
+                        is_error, timestamp, image_data, raw_content, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                    (
+                        conversation_id,
+                        role,
+                        content,
+                        tool_id,
+                        is_error,
+                        datetime.utcnow(),
+                        image_data,
+                        raw_content,
+                        datetime.utcnow(),
+                        datetime.utcnow(),
+                    ),
+                )
+                await conn.commit()
+
+    async def mark_completed(self, conversation_id: int):
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE computer_use_chats
+                    SET completed_at = %s
+                    WHERE id = %s AND type = 'single'
+                """,
+                    (datetime.utcnow(), conversation_id),
+                )
+                await conn.commit()
 
 
 async def sampling_loop(
@@ -84,6 +193,9 @@ async def sampling_loop(
     api_key: str,
     only_n_most_recent_images: int | None = None,
     max_tokens: int = 4096,
+    conversation_store: Optional[ConversationStore] = None,
+    current_conversation_id: Optional[int] = None,
+    conversation_type: str = "continuous",
 ):
     """
     Agentic sampling loop for the assistant/tool interaction of computer use.
@@ -97,6 +209,19 @@ async def sampling_loop(
         type="text",
         text=f"{SYSTEM_PROMPT}{' ' + system_prompt_suffix if system_prompt_suffix else ''}",
     )
+
+    # Create conversation store if not provided
+    if conversation_store is None:
+        # try:
+        conversation_store = await ConversationStore.create()
+    # except ConnectionError as e:
+    #     return messages, None
+
+    if current_conversation_id is None:
+        current_conversation_id = await conversation_store.create_conversation(
+            model=model,
+            conv_type=conversation_type,
+        )
 
     while True:
         enable_prompt_caching = False
@@ -124,13 +249,25 @@ async def sampling_loop(
                 min_removal_threshold=image_truncation_threshold,
             )
 
+        # Store the last user message into db
+        last_user_message = messages[-1]
+        if last_user_message["role"] == "user":
+            if current_conversation_id is not None:
+                await conversation_store.store_message(
+                    conversation_id=current_conversation_id,
+                    role="user",
+                    content=json.dumps(last_user_message["content"]),
+                    raw_content=json.dumps(last_user_message),
+                    tool_id="user-input",
+                )
+
         # Call the API
         # we use raw_response to provide debug information to streamlit. Your
         # implementation may be able call the SDK directly with:
         # `response = client.messages.create(...)` instead.
         try:
             raw_response = client.beta.messages.with_raw_response.create(
-                max_tokens=max_tokens,
+                max_tokens=max_tokens if max_tokens is not None else 4096,
                 messages=messages,
                 model=model,
                 system=[system],
@@ -139,10 +276,10 @@ async def sampling_loop(
             )
         except (APIStatusError, APIResponseValidationError) as e:
             api_response_callback(e.request, e.response, e)
-            return messages
+            return messages, current_conversation_id
         except APIError as e:
             api_response_callback(e.request, e.body, e)
-            return messages
+            return messages, current_conversation_id
 
         api_response_callback(
             raw_response.http_response.request, raw_response.http_response, None
@@ -151,12 +288,20 @@ async def sampling_loop(
         response = raw_response.parse()
 
         response_params = _response_to_params(response)
-        messages.append(
-            {
-                "role": "assistant",
-                "content": response_params,
-            }
-        )
+        response_message: BetaMessageParam = {
+            "role": "assistant",
+            "content": response_params,
+        }
+        messages.append(response_message)
+
+        if current_conversation_id is not None:
+            await conversation_store.store_message(
+                conversation_id=current_conversation_id,
+                role="assistant",
+                content=json.dumps(response_params),
+                tool_id="response",
+                raw_content=json.dumps(response_message),
+            )
 
         tool_result_content: list[BetaToolResultBlockParam] = []
         for content_block in response_params:
@@ -172,9 +317,25 @@ async def sampling_loop(
                 tool_output_callback(result, content_block["id"])
 
         if not tool_result_content:
-            return messages
+            if current_conversation_id is not None:
+                await conversation_store.mark_completed(current_conversation_id)
+                return messages, current_conversation_id
 
-        messages.append({"content": tool_result_content, "role": "user"})
+        result_message: BetaMessageParam = {
+            "role": "user",
+            "content": tool_result_content,
+        }
+
+        if current_conversation_id is not None:
+            await conversation_store.store_message(
+                conversation_id=current_conversation_id,
+                role="tool",
+                content=json.dumps(tool_result_content),
+                tool_id="response",
+                raw_content=json.dumps(result_message),
+            )
+
+        messages.append(result_message)
 
 
 def _maybe_filter_to_n_most_recent_images(

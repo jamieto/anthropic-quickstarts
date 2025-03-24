@@ -1,0 +1,7 @@
+{
+    "reportMissingImports": false,
+    "pythonVersion": "3.12",
+    "extraPaths": [
+        "/Users/jamieto/.pyenv/versions/3.12.1/lib/python3.12/site-packages"
+    ]
+}

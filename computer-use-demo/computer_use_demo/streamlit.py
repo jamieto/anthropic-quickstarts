@@ -42,10 +42,90 @@ STREAMLIT_STYLE = """
     .stAppDeployButton {
         visibility: hidden;
     }
+
+    @font-face {
+        font-family: Satoshi;
+        src: url(https://dqgx9uh1tgpw9.cloudfront.net/7504e0b2-d7dc-4b2e-9d8b-169498c41e35/webfonts/Satoshi-Regular.woff) format('woff');
+        font-weight: normal;
+    }
+
+    body {
+        font-family: Satoshi;
+    }
+
+    .stMarkdown>div>p {
+        font-family: Satoshi, sans-serif;
+    }
+
+    div[data-testid="stChatMessageAvatarUser"] {
+        background: #3fa9f5;
+    }
+
+    div[data-testid="stChatMessageAvatarAssistant"] {
+        background:
+        #f90f41;
+    }
+
+    h1#claude-computer-use-demo {
+        display: none;
+    }
+
+    div[data-testid="stAlertContainer"] {
+        display: none;
+    }
+
+    .stTabs.st-emotion-cache-0.esjhkag0 div[role="tablist"] {
+        display: none;
+    }
+
+    stChatMessage, pre {
+        border-radius: 20px!important;
+    }
+
+    button[data-testid="stChatInputSubmitButton"]>svg {
+        fill: #00B2CA;
+    }
+
+    .stChatInput {
+        border-radius: 20px;
+    }
+
+    div[data-baseweb="textarea"] {
+        border-color: transparent;
+    }
+
+    div[data-baseweb="base-input"]>textarea::placeholder {
+        color: transparent;
+    }
+
+    .stImage {
+        border-radius: 20px !important;
+        overflow: hidden;
+    }
+
+    ul[role="option"]>li>span {
+        font-family: Satoshi, sans-serif !important;
+    }
+
+    div[data-testid="stMarkdownContainer"] {
+        font-family: Satoshi, sans-serif !important;
+    }
+
+    button[kind="primary"] {
+        background: #00B2CA !important;
+        border-color: #00B2CA;
+    }
+    button[kind="primary"]:active {
+        color: white;
+    }
+    .st-cq {
+        background: #00B2CA;
+    }
 </style>
 """
 
-WARNING_TEXT = "⚠️ Security Alert: Never provide access to sensitive accounts or data, as malicious web content can hijack Claude's behavior"
+# WARNING_TEXT = "⚠️ Security Alert: Never provide access to sensitive accounts or data, as malicious web content can hijack Claude's behavior"
+WARNING_TEXT = "⚠️ Security Alert: Never provide access to sensitive accounts or data"
 
 
 class Sender(StrEnum):
@@ -55,8 +135,15 @@ class Sender(StrEnum):
 
 
 def setup_state():
+    # Get chat_id from URL parameters if it exists
+    query_params = st.experimental_get_query_params()
+    chat_id = query_params.get("chat_id", [None])[0]
+
     if "messages" not in st.session_state:
         st.session_state.messages = []
+    if "current_conversation_id" not in st.session_state:
+        # Use chat_id from URL if available, otherwise keep as None
+        st.session_state.current_conversation_id = chat_id
     if "api_key" not in st.session_state:
         # Try to load API key from file first, then environment
         st.session_state.api_key = load_from_storage("api_key") or os.getenv(
@@ -96,7 +183,7 @@ async def main():
 
     st.markdown(STREAMLIT_STYLE, unsafe_allow_html=True)
 
-    st.title("Claude Computer Use Demo")
+    st.title("claude computer use demo")
 
     if not os.getenv("HIDE_WARNING", False):
         st.warning(WARNING_TEXT)
@@ -164,7 +251,7 @@ async def main():
 
     chat, http_logs = st.tabs(["Chat", "HTTP Exchange Logs"])
     new_message = st.chat_input(
-        "Type a message to send to Claude to control the computer..."
+        "Type a message to send to the server to control the computer..."
     )
 
     with chat:
@@ -211,7 +298,7 @@ async def main():
 
         with st.spinner("Running Agent..."):
             # run the agent sampling loop with the newest message
-            st.session_state.messages = await sampling_loop(
+            messages, conversation_id = await sampling_loop(
                 system_prompt_suffix=st.session_state.custom_system_prompt,
                 model=st.session_state.model,
                 provider=st.session_state.provider,
@@ -226,8 +313,12 @@ async def main():
                     response_state=st.session_state.responses,
                 ),
                 api_key=st.session_state.api_key,
+                current_conversation_id=st.session_state.current_conversation_id,
                 only_n_most_recent_images=st.session_state.only_n_most_recent_images,
             )
+
+            st.session_state.messages = messages
+            st.session_state.current_conversation_id = conversation_id
 
 
 def validate_auth(provider: APIProvider, api_key: str | None):

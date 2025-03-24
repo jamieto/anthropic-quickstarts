@@ -29,15 +29,61 @@
     <body>
         <div class="container">
             <iframe
-                src="http://localhost:8501"
+                id="streamlitFrame"
                 class="left"
                 allow="fullscreen"
             ></iframe>
             <iframe
-                src="http://localhost:6080/vnc.html?view_only=1&autoconnect=1&resize=scale"
+                id="vnc"
                 class="right"
                 allow="fullscreen"
             ></iframe>
+            <button
+                id="toggleViewOnly"
+                style="position: absolute; top: 10px; right: 10px; z-index: 1000"
+            >
+                Toggle Screen Control (Off)
+            </button>
+            <script>
+                document
+                    .getElementById("toggleViewOnly")
+                    .addEventListener("click", function () {
+                        var vncIframe = document.getElementById("vnc");
+                        var button = document.getElementById("toggleViewOnly");
+                        var currentSrc = vncIframe.src;
+                        if (currentSrc.includes("view_only=1")) {
+                            vncIframe.src = currentSrc.replace(
+                                "view_only=1",
+                                "view_only=0",
+                            );
+                            button.innerText = "Toggle Screen Control (On)";
+                        } else {
+                            vncIframe.src = currentSrc.replace(
+                                "view_only=0",
+                                "view_only=1",
+                            );
+                            button.innerText = "Toggle Screen Control (Off)";
+                        }
+                    });
+
+                    // Get the current host from the browser's address bar
+                    const host = window.location.hostname;
+
+                    // Get chat_id from URL parameters if it exists
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const chatId = urlParams.get('chat_id');
+
+                    // Build the Streamlit URL with chat_id if it exists
+                    let streamlitUrl = `http://${host}:8501`;
+                    if (chatId) {
+                        streamlitUrl += `?chat_id=${chatId}`;
+                    }
+
+                    // Set the iframe sources
+                    document.getElementById("streamlitFrame").src = streamlitUrl;
+                    document.getElementById("vnc").src = `http://${host}:6080/vnc.html?&resize=scale&autoconnect=1&view_only=1&reconnect=1&reconnect_delay=2000`;
+
+            </script>
         </div>
     </body>
 </html>

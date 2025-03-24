@@ -29,13 +29,12 @@
     <body>
         <div class="container">
             <iframe
-                src="http://localhost:8501"
+                id="streamlitFrame"
                 class="left"
                 allow="fullscreen"
             ></iframe>
             <iframe
                 id="vnc"
-                src="http://127.0.0.1:6080/vnc.html?&resize=scale&autoconnect=1&view_only=1&reconnect=1&reconnect_delay=2000"
                 class="right"
                 allow="fullscreen"
             ></iframe>
@@ -66,6 +65,24 @@
                             button.innerText = "Toggle Screen Control (Off)";
                         }
                     });
+
+                    // Get the current host from the browser's address bar
+                    const host = window.location.hostname;
+
+                    // Get chat_id from URL parameters if it exists
+                    const urlParams = new URLSearchParams(window.location.search);
+                    const chatId = urlParams.get('chat_id');
+
+                    // Build the Streamlit URL with chat_id if it exists
+                    let streamlitUrl = `http://${host}:8501`;
+                    if (chatId) {
+                        streamlitUrl += `?chat_id=${chatId}`;
+                    }
+
+                    // Set the iframe sources
+                    document.getElementById("streamlitFrame").src = streamlitUrl;
+                    document.getElementById("vnc").src = `http://${host}:6080/vnc.html?&resize=scale&autoconnect=1&view_only=1&reconnect=1&reconnect_delay=2000`;
+
             </script>
         </div>
     </body>
