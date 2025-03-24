@@ -7,11 +7,13 @@ import base64
 import os
 import subprocess
 import traceback
+from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from enum import StrEnum
 from functools import partial
 from pathlib import PosixPath
-from typing import cast
+from typing import cast, get_args
 
 import httpx
 import streamlit as st
@@ -19,24 +21,60 @@ from anthropic import RateLimitError
 from anthropic.types.beta import (
     BetaContentBlockParam,
     BetaTextBlockParam,
+    BetaToolResultBlockParam,
 )
 from streamlit.delta_generator import DeltaGenerator
 
 from computer_use_demo.loop import (
-    PROVIDER_TO_DEFAULT_MODEL_NAME,
     APIProvider,
     sampling_loop,
 )
-from computer_use_demo.tools import ToolResult
+from computer_use_demo.tools import ToolResult, ToolVersion
+
+PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
+    APIProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
+    APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
+}
+
+
+@dataclass(kw_only=True, frozen=True)
+class ModelConfig:
+    tool_version: ToolVersion
+    max_output_tokens: int
+    default_output_tokens: int
+    has_thinking: bool = False
+
+
+SONNET_3_5_NEW = ModelConfig(
+    tool_version="computer_use_20241022",
+    max_output_tokens=1024 * 8,
+    default_output_tokens=1024 * 4,
+)
+
+SONNET_3_7 = ModelConfig(
+    tool_version="computer_use_20250124",
+    max_output_tokens=128_000,
+    default_output_tokens=1024 * 16,
+    has_thinking=True,
+)
+
+MODEL_TO_MODEL_CONF: dict[str, ModelConfig] = {
+    "claude-3-7-sonnet-20250219": SONNET_3_7,
+}
 
 CONFIG_DIR = PosixPath("~/.anthropic").expanduser()
 API_KEY_FILE = CONFIG_DIR / "api_key"
 STREAMLIT_STYLE = """
 <style>
-    /* Hide chat input while agent loop is running */
-    .stApp[data-teststate=running] .stChatInput textarea,
-    .stApp[data-test-script-state=running] .stChatInput textarea {
-        display: none;
+    /* Highlight the stop button in red */
+    button[kind=header] {
+        background-color: rgb(255, 75, 75);
+        border: 1px solid rgb(255, 75, 75);
+        color: rgb(255, 255, 255);
+    }
+    button[kind=header]:hover {
+        background-color: rgb(255, 51, 51);
     }
      /* Hide the streamlit deploy button */
     .stAppDeployButton {
@@ -124,8 +162,9 @@ STREAMLIT_STYLE = """
 </style>
 """
 
-# WARNING_TEXT = "⚠️ Security Alert: Never provide access to sensitive accounts or data, as malicious web content can hijack Claude's behavior"
-WARNING_TEXT = "⚠️ Security Alert: Never provide access to sensitive accounts or data"
+WARNING_TEXT = "⚠️ Security Alert: Never provide access to sensitive accounts or data, as malicious web content can hijack Claude's behavior"
+INTERRUPT_TEXT = "(user stopped or interrupted and wrote the following)"
+INTERRUPT_TOOL_ERROR = "human stopped or interrupted tool execution"
 
 
 class Sender(StrEnum):
@@ -164,17 +203,35 @@ def setup_state():
     if "tools" not in st.session_state:
         st.session_state.tools = {}
     if "only_n_most_recent_images" not in st.session_state:
-        st.session_state.only_n_most_recent_images = 10
+        st.session_state.only_n_most_recent_images = 3
     if "custom_system_prompt" not in st.session_state:
         st.session_state.custom_system_prompt = load_from_storage("system_prompt") or ""
     if "hide_images" not in st.session_state:
         st.session_state.hide_images = False
+    if "token_efficient_tools_beta" not in st.session_state:
+        st.session_state.token_efficient_tools_beta = False
+    if "in_sampling_loop" not in st.session_state:
+        st.session_state.in_sampling_loop = False
 
 
 def _reset_model():
     st.session_state.model = PROVIDER_TO_DEFAULT_MODEL_NAME[
         cast(APIProvider, st.session_state.provider)
     ]
+    _reset_model_conf()
+
+
+def _reset_model_conf():
+    model_conf = (
+        SONNET_3_7
+        if "3-7" in st.session_state.model
+        else MODEL_TO_MODEL_CONF.get(st.session_state.model, SONNET_3_5_NEW)
+    )
+    st.session_state.tool_version = model_conf.tool_version
+    st.session_state.has_thinking = model_conf.has_thinking
+    st.session_state.output_tokens = model_conf.default_output_tokens
+    st.session_state.max_output_tokens = model_conf.max_output_tokens
+    st.session_state.thinking_budget = int(model_conf.default_output_tokens / 2)
 
 
 async def main():
@@ -205,7 +262,7 @@ async def main():
             on_change=_reset_api_provider,
         )
 
-        st.text_input("Model", key="model")
+        st.text_input("Model", key="model", on_change=_reset_model_conf)
 
         if st.session_state.provider == APIProvider.ANTHROPIC:
             st.text_input(
@@ -230,6 +287,27 @@ async def main():
             ),
         )
         st.checkbox("Hide screenshots", key="hide_images")
+        st.checkbox(
+            "Enable token-efficient tools beta", key="token_efficient_tools_beta"
+        )
+        versions = get_args(ToolVersion)
+        st.radio(
+            "Tool Versions",
+            key="tool_versions",
+            options=versions,
+            index=versions.index(st.session_state.tool_version),
+        )
+
+        st.number_input("Max Output Tokens", key="output_tokens", step=1)
+
+        st.checkbox("Thinking Enabled", key="thinking", value=False)
+        st.number_input(
+            "Thinking Budget",
+            key="thinking_budget",
+            max_value=st.session_state.max_output_tokens,
+            step=1,
+            disabled=not st.session_state.thinking,
+        )
 
         if st.button("Reset", type="primary"):
             with st.spinner("Resetting..."):
@@ -282,7 +360,10 @@ async def main():
             st.session_state.messages.append(
                 {
                     "role": Sender.USER,
-                    "content": [BetaTextBlockParam(type="text", text=new_message)],
+                    "content": [
+                        *maybe_add_interruption_blocks(),
+                        BetaTextBlockParam(type="text", text=new_message),
+                    ],
                 }
             )
             _render_message(Sender.USER, new_message)
@@ -296,7 +377,7 @@ async def main():
             # we don't have a user message to respond to, exit early
             return
 
-        with st.spinner("Running Agent..."):
+        with track_sampling_loop():
             # run the agent sampling loop with the newest message
             messages, conversation_id = await sampling_loop(
                 system_prompt_suffix=st.session_state.custom_system_prompt,
@@ -315,10 +396,47 @@ async def main():
                 api_key=st.session_state.api_key,
                 current_conversation_id=st.session_state.current_conversation_id,
                 only_n_most_recent_images=st.session_state.only_n_most_recent_images,
+                tool_version=st.session_state.tool_version,
+                max_tokens=st.session_state.output_tokens,
+                thinking_budget=st.session_state.thinking_budget
+                if st.session_state.thinking
+                else None,
+                token_efficient_tools_beta=st.session_state.token_efficient_tools_beta,
             )
 
             st.session_state.messages = messages
             st.session_state.current_conversation_id = conversation_id
+
+
+def maybe_add_interruption_blocks():
+    if not st.session_state.in_sampling_loop:
+        return []
+    # If this function is called while we're in the sampling loop, we can assume that the previous sampling loop was interrupted
+    # and we should annotate the conversation with additional context for the model and heal any incomplete tool use calls
+    result = []
+    last_message = st.session_state.messages[-1]
+    previous_tool_use_ids = [
+        block["id"] for block in last_message["content"] if block["type"] == "tool_use"
+    ]
+    for tool_use_id in previous_tool_use_ids:
+        st.session_state.tools[tool_use_id] = ToolResult(error=INTERRUPT_TOOL_ERROR)
+        result.append(
+            BetaToolResultBlockParam(
+                tool_use_id=tool_use_id,
+                type="tool_result",
+                content=INTERRUPT_TOOL_ERROR,
+                is_error=True,
+            )
+        )
+    result.append(BetaTextBlockParam(type="text", text=INTERRUPT_TEXT))
+    return result
+
+
+@contextmanager
+def track_sampling_loop():
+    st.session_state.in_sampling_loop = True
+    yield
+    st.session_state.in_sampling_loop = False
 
 
 def validate_auth(provider: APIProvider, api_key: str | None):
@@ -462,6 +580,9 @@ def _render_message(
         elif isinstance(message, dict):
             if message["type"] == "text":
                 st.write(message["text"])
+            elif message["type"] == "thinking":
+                thinking_content = message.get("thinking", "")
+                st.markdown(f"[Thinking]\n\n{thinking_content}")
             elif message["type"] == "tool_use":
                 st.code(f'Tool Use: {message["name"]}\nInput: {message["input"]}')
             else:
