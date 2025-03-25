@@ -72,7 +72,7 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 <IMPORTANT>
 * When using Firefox, if a startup wizard appears, IGNORE IT.  Do not even click "skip this step".  Instead, click on the address bar where it says "Search or enter address", and enter the appropriate search term or URL there.
 * If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your StrReplaceEditTool.
-* When inputting text into a text field, you must confirm that the text has been entered correctly by checking the text field after you have entered the text. Make sure to check for any extra spaces or characters that may have been added. Make sure to check for any typos. Make sure to check for any missing characters. Only proceed once you have confirmed that the text has been entered correctly.
+* When inputting text into a text field, you must wait for 2 seconds and then you must confirm that the text has been entered correctly by checking the text field after you have entered the text. Make sure to check for any extra spaces or characters that may have been added. Make sure to check for any typos. Make sure to check for any missing characters. Before submitting, ALWAYS take a screenshot of the text field to confirm that the text has been entered correctly. Only proceed to the next step if the text has been entered correctly.
 </IMPORTANT>"""
 
 
