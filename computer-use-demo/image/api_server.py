@@ -8,7 +8,6 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
 from computer_use_demo.loop import (
-    PROVIDER_TO_DEFAULT_MODEL_NAME,
     APIProvider,
     BetaContentBlockParam,
     BetaMessageParam,
@@ -16,6 +15,7 @@ from computer_use_demo.loop import (
     ToolResult,
     sampling_loop,
 )
+from computer_use_demo.loop.defaults import PROVIDER_TO_DEFAULT_MODEL_NAME
 
 app = FastAPI()
 
@@ -41,17 +41,17 @@ class MessageResponse(BaseModel):
 message_store: Dict[int, List[BetaMessageParam]] = {}
 
 
-async def message_callback(content: BetaContentBlockParam):
+def message_callback(content: BetaContentBlockParam):
     """Callback for message outputs"""
     # We'll collect messages through the messages list
 
 
-async def tool_callback(result: ToolResult, tool_id: str):
+def tool_callback(result: ToolResult, tool_id: str):
     """Callback for tool outputs"""
     # We'll collect tool results through the messages list
 
 
-async def api_callback(request, response, error):
+def api_callback(request, response, error):
     """Callback for API responses"""
     if error:
         logging.error(f"API Error: {error}")
@@ -104,10 +104,13 @@ async def process_message(request: MessageRequest):
                 api_response_callback=api_callback,
                 api_key=api_key,
                 only_n_most_recent_images=request.only_n_most_recent_images,
-                max_tokens=request.max_tokens,
+                max_tokens=128000,
                 conversation_store=conversation_store,
                 current_conversation_id=current_conversation_id,
                 conversation_type="single",
+                tool_version="computer_use_20250124",
+                thinking_budget=4096,
+                token_efficient_tools_beta=False,
             )
         )
 
