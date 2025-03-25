@@ -15,7 +15,6 @@ from computer_use_demo.loop import (
     ToolResult,
     sampling_loop,
 )
-from computer_use_demo.loop.defaults import PROVIDER_TO_DEFAULT_MODEL_NAME
 
 app = FastAPI()
 
@@ -82,7 +81,7 @@ async def process_message(request: MessageRequest):
 
         # Set up provider
         provider = APIProvider(request.provider)
-        model = request.model or PROVIDER_TO_DEFAULT_MODEL_NAME[provider]
+        model = request.model or APIProvider.ANTHROPIC
 
         # Create conversation store
         conversation_store = await ConversationStore.create()
