@@ -16,6 +16,12 @@ from computer_use_demo.loop import (
     sampling_loop,
 )
 
+PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
+    APIProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
+    APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
+    APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
+}
+
 app = FastAPI()
 
 
@@ -80,8 +86,8 @@ async def process_message(request: MessageRequest):
         )
 
         # Set up provider
-        provider = APIProvider(request.provider)
-        model = request.model or APIProvider.ANTHROPIC
+        provider = APIProvider.ANTHROPIC
+        model = PROVIDER_TO_DEFAULT_MODEL_NAME[provider]
 
         # Create conversation store
         conversation_store = await ConversationStore.create()
@@ -102,8 +108,8 @@ async def process_message(request: MessageRequest):
                 tool_output_callback=tool_callback,
                 api_response_callback=api_callback,
                 api_key=api_key,
-                only_n_most_recent_images=request.only_n_most_recent_images,
-                max_tokens=128000,
+                only_n_most_recent_images=1,
+                max_tokens=8192,
                 conversation_store=conversation_store,
                 current_conversation_id=current_conversation_id,
                 conversation_type="single",
