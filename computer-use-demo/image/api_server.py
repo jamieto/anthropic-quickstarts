@@ -17,7 +17,8 @@ from computer_use_demo.loop import (
 )
 
 PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
-    APIProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
+    # APIProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
+    APIProvider.ANTHROPIC: "claude-sonnet-4-20250514",
     APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
     APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
 }
@@ -95,6 +96,7 @@ async def process_message(request: MessageRequest):
         current_conversation_id = await conversation_store.create_conversation(
             model=model,
             conv_type="single",
+            status="running",
         )
 
         # Run the sampling loop
@@ -108,7 +110,7 @@ async def process_message(request: MessageRequest):
                 tool_output_callback=tool_callback,
                 api_response_callback=api_callback,
                 api_key=api_key,
-                only_n_most_recent_images=1,
+                only_n_most_recent_images=10,
                 max_tokens=8192,
                 conversation_store=conversation_store,
                 current_conversation_id=current_conversation_id,

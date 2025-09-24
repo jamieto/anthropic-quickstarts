@@ -106,19 +106,21 @@ class ConversationStore:
         except Exception as e:
             raise ConnectionError(f"Failed to connect to MySQL: {str(e)}") from e
 
-    async def create_conversation(self, model: str, conv_type: str) -> int:
+    async def create_conversation(self, model: str, conv_type: str, status: str) -> int:
         """Create a new conversation record and return its ID"""
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cur:
                 await cur.execute(
                     """
                     INSERT INTO computer_use_chats (
-                        name, type, created_at, updated_at
-                    ) VALUES (%s, %s, %s, %s)
+                        name, type, status, status_updated_at, created_at, updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s)
                 """,
                     (
                         model,
                         conv_type,
+                        status,
+                        datetime.utcnow(),
                         datetime.utcnow(),
                         datetime.utcnow(),
                     ),
@@ -177,6 +179,37 @@ class ConversationStore:
                 await conn.commit()
 
 
+async def _update_status(
+    conversation_store: ConversationStore,
+    conversation_id: int,
+    status: str,
+    message: Optional[str] = None,
+):
+    """A helper to update the status and related fields in the database."""
+    now = datetime.utcnow()
+    pool = conversation_store.pool
+
+    async with pool.acquire() as conn:
+        async with conn.cursor() as cur:
+            # The base query updates the core status fields
+            query = """
+                UPDATE computer_use_chats
+                SET status = %s, status_updated_at = %s, status_message = %s
+            """
+            params = [status, now, message]
+
+            # If the new status is 'completed', also set the completed_at timestamp
+            if status == "completed":
+                query += ", completed_at = %s"
+                params.append(now)
+
+            query += " WHERE id = %s"
+            params.append(conversation_id)
+
+            await cur.execute(query, tuple(params))
+            await conn.commit()
+
+
 async def sampling_loop(
     *,
     model: str,
@@ -219,9 +252,48 @@ async def sampling_loop(
         current_conversation_id = await conversation_store.create_conversation(
             model=model,
             conv_type=conversation_type,
+            status="running",
         )
 
     while True:
+        # Check for pause/stop signals at the start of each iteration
+        try:
+            async with conversation_store.pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(
+                        "SELECT status FROM computer_use_chats WHERE id = %s",
+                        (current_conversation_id,),
+                    )
+                    result = await cur.fetchone()
+                    current_status = result[0] if result else "failed"
+
+            if current_status == "stopping":
+                await _update_status(
+                    conversation_store,
+                    current_conversation_id,
+                    "cancelled",
+                    "Task cancelled by user.",
+                )
+                break  # Exit the loop gracefully
+
+            if current_status == "pausing":
+                await _update_status(
+                    conversation_store,
+                    current_conversation_id,
+                    "paused",
+                    "Task paused by user.",
+                )
+                break  # Exit the loop gracefully
+
+        except Exception as e:
+            await _update_status(
+                conversation_store,
+                current_conversation_id,
+                "failed",
+                f"Internal error during status check: {e}",
+            )
+            break
+
         enable_prompt_caching = False
         betas = [tool_group.beta_flag] if tool_group.beta_flag else []
         if token_efficient_tools_beta:
@@ -283,68 +355,101 @@ async def sampling_loop(
                 betas=betas,
                 extra_body=extra_body,
             )
+            # except (APIStatusError, APIResponseValidationError) as e:
+            #     api_response_callback(e.request, e.response, e)
+            #     return messages, current_conversation_id
+            # except APIError as e:
+            #     api_response_callback(e.request, e.body, e)
+            #     return messages, current_conversation_id
+
+            api_response_callback(
+                raw_response.http_response.request, raw_response.http_response, None
+            )
+
+            response = raw_response.parse()
+
+            response_params = _response_to_params(response)
+            response_message: BetaMessageParam = {
+                "role": "assistant",
+                "content": response_params,
+            }
+            messages.append(response_message)
+
+            if current_conversation_id is not None:
+                await conversation_store.store_message(
+                    conversation_id=current_conversation_id,
+                    role="assistant",
+                    content=json.dumps(response_params),
+                    tool_id="response",
+                    raw_content=json.dumps(response_message),
+                )
+
+            tool_result_content: list[BetaToolResultBlockParam] = []
+            for content_block in response_params:
+                output_callback(content_block)
+                if content_block["type"] == "tool_use":
+                    result = await tool_collection.run(
+                        name=content_block["name"],
+                        tool_input=cast(dict[str, Any], content_block["input"]),
+                    )
+                    tool_result_content.append(
+                        _make_api_tool_result(result, content_block["id"])
+                    )
+                    tool_output_callback(result, content_block["id"])
+
+            if not tool_result_content:
+                if current_conversation_id is not None:
+                    await _update_status(
+                        conversation_store,
+                        current_conversation_id,
+                        "completed",
+                        "Task finished successfully without further tool use.",
+                    )
+                    await conversation_store.mark_completed(current_conversation_id)
+                    return messages, current_conversation_id
+
+            result_message: BetaMessageParam = {
+                "role": "user",
+                "content": tool_result_content,
+            }
+
+            if current_conversation_id is not None:
+                await conversation_store.store_message(
+                    conversation_id=current_conversation_id,
+                    role="tool",
+                    content=json.dumps(tool_result_content),
+                    tool_id="response",
+                    raw_content=json.dumps(result_message),
+                )
+
+            messages.append(result_message)
+
         except (APIStatusError, APIResponseValidationError) as e:
+            # MODIFIED: On API error, update status to 'failed'
+            error_message = f"API Error: {e}"
+
+            await _update_status(
+                conversation_store, current_conversation_id, "failed", error_message
+            )
             api_response_callback(e.request, e.response, e)
             return messages, current_conversation_id
         except APIError as e:
+            # MODIFIED: On API error, update status to 'failed'
+            error_message = f"API Error: {e}"
+
+            await _update_status(
+                conversation_store, current_conversation_id, "failed", error_message
+            )
             api_response_callback(e.request, e.body, e)
             return messages, current_conversation_id
+        except Exception as e:
+            # MODIFIED: On any other unexpected error, update status to 'failed'
+            error_message = f"An unexpected error occurred: {e}"
 
-        api_response_callback(
-            raw_response.http_response.request, raw_response.http_response, None
-        )
-
-        response = raw_response.parse()
-
-        response_params = _response_to_params(response)
-        response_message: BetaMessageParam = {
-            "role": "assistant",
-            "content": response_params,
-        }
-        messages.append(response_message)
-
-        if current_conversation_id is not None:
-            await conversation_store.store_message(
-                conversation_id=current_conversation_id,
-                role="assistant",
-                content=json.dumps(response_params),
-                tool_id="response",
-                raw_content=json.dumps(response_message),
+            await _update_status(
+                conversation_store, current_conversation_id, "failed", error_message
             )
-
-        tool_result_content: list[BetaToolResultBlockParam] = []
-        for content_block in response_params:
-            output_callback(content_block)
-            if content_block["type"] == "tool_use":
-                result = await tool_collection.run(
-                    name=content_block["name"],
-                    tool_input=cast(dict[str, Any], content_block["input"]),
-                )
-                tool_result_content.append(
-                    _make_api_tool_result(result, content_block["id"])
-                )
-                tool_output_callback(result, content_block["id"])
-
-        if not tool_result_content:
-            if current_conversation_id is not None:
-                await conversation_store.mark_completed(current_conversation_id)
-                return messages, current_conversation_id
-
-        result_message: BetaMessageParam = {
-            "role": "user",
-            "content": tool_result_content,
-        }
-
-        if current_conversation_id is not None:
-            await conversation_store.store_message(
-                conversation_id=current_conversation_id,
-                role="tool",
-                content=json.dumps(tool_result_content),
-                tool_id="response",
-                raw_content=json.dumps(result_message),
-            )
-
-        messages.append(result_message)
+            raise  # Re-raise the exception after logging the status
 
 
 def _maybe_filter_to_n_most_recent_images(
