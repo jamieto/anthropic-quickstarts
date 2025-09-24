@@ -32,7 +32,7 @@ from computer_use_demo.loop import (
 from computer_use_demo.tools import ToolResult, ToolVersion
 
 PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
-    APIProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
+    APIProvider.ANTHROPIC: "claude-sonnet-4-20250514",
     APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
     APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
 }
@@ -59,8 +59,18 @@ SONNET_3_7 = ModelConfig(
     has_thinking=True,
 )
 
+CLAUDE_4 = ModelConfig(
+    tool_version="computer_use_20250124",
+    max_output_tokens=128_000,
+    default_output_tokens=1024 * 16,
+    has_thinking=True,
+)
+
 MODEL_TO_MODEL_CONF: dict[str, ModelConfig] = {
     "claude-3-7-sonnet-20250219": SONNET_3_7,
+    "claude-opus-4@20250508": CLAUDE_4,
+    "claude-sonnet-4-20250514": CLAUDE_4,
+    "claude-opus-4-20250514": CLAUDE_4,
 }
 
 CONFIG_DIR = PosixPath("~/.anthropic").expanduser()
@@ -223,11 +233,17 @@ def _reset_model():
 
 def _reset_model_conf():
     model_conf = (
-        SONNET_3_7
-        if "3-7" in st.session_state.model
-        else MODEL_TO_MODEL_CONF.get(st.session_state.model, SONNET_3_5_NEW)
+        MODEL_TO_MODEL_CONF.get(
+            st.session_state.model, SONNET_3_5_NEW
+        )  # Default fallback
     )
-    st.session_state.tool_version = model_conf.tool_version
+
+    # If we're in radio selection mode, use the selected tool version
+    if hasattr(st.session_state, "tool_versions"):
+        st.session_state.tool_version = st.session_state.tool_versions
+    else:
+        st.session_state.tool_version = model_conf.tool_version
+
     st.session_state.has_thinking = model_conf.has_thinking
     st.session_state.output_tokens = model_conf.default_output_tokens
     st.session_state.max_output_tokens = model_conf.max_output_tokens
@@ -266,7 +282,7 @@ async def main():
 
         if st.session_state.provider == APIProvider.ANTHROPIC:
             st.text_input(
-                "Anthropic API Key",
+                "Claude API Key",
                 type="password",
                 key="api_key",
                 on_change=lambda: save_to_storage("api_key", st.session_state.api_key),
@@ -296,6 +312,9 @@ async def main():
             key="tool_versions",
             options=versions,
             index=versions.index(st.session_state.tool_version),
+            on_change=lambda: setattr(
+                st.session_state, "tool_version", st.session_state.tool_versions
+            ),
         )
 
         st.number_input("Max Output Tokens", key="output_tokens", step=1)
@@ -339,7 +358,7 @@ async def main():
                 _render_message(message["role"], message["content"])
             elif isinstance(message["content"], list):
                 for block in message["content"]:
-                    # the tool result we send back to the Anthropic API isn't sufficient to render all details,
+                    # the tool result we send back to the Claude API isn't sufficient to render all details,
                     # so we store the tool use responses
                     if isinstance(block, dict) and block["type"] == "tool_result":
                         _render_message(
@@ -396,7 +415,7 @@ async def main():
                 api_key=st.session_state.api_key,
                 current_conversation_id=st.session_state.current_conversation_id,
                 only_n_most_recent_images=st.session_state.only_n_most_recent_images,
-                tool_version=st.session_state.tool_version,
+                tool_version=st.session_state.tool_versions,
                 max_tokens=st.session_state.output_tokens,
                 thinking_budget=st.session_state.thinking_budget
                 if st.session_state.thinking
@@ -442,7 +461,7 @@ def track_sampling_loop():
 def validate_auth(provider: APIProvider, api_key: str | None):
     if provider == APIProvider.ANTHROPIC:
         if not api_key:
-            return "Enter your Anthropic API key in the sidebar to continue."
+            return "Enter your Claude API key in the sidebar to continue."
     if provider == APIProvider.BEDROCK:
         import boto3
 
@@ -540,7 +559,7 @@ def _render_error(error: Exception):
     if isinstance(error, RateLimitError):
         body = "You have been rate limited."
         if retry_after := error.response.headers.get("retry-after"):
-            body += f" **Retry after {str(timedelta(seconds=int(retry_after)))} (HH:MM:SS).** See our API [documentation](https://docs.anthropic.com/en/api/rate-limits) for more details."
+            body += f" **Retry after {str(timedelta(seconds=int(retry_after)))} (HH:MM:SS).** See our API [documentation](https://docs.claude.com/en/api/rate-limits) for more details."
         body += f"\n\n{error.message}"
     else:
         body = str(error)

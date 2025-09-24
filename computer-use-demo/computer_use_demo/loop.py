@@ -1,5 +1,5 @@
 """
-Agentic sampling loop that calls the Anthropic API and local implementation of anthropic-defined computer use tools.
+Agentic sampling loop that calls the Claude API and local implementation of anthropic-defined computer use tools.
 """
 
 import json
@@ -58,7 +58,7 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 * You can feel free to install Ubuntu applications with your bash tool. Use curl instead of wget.
 * To open firefox, please just click on the firefox icon.  Note, firefox-esr is what is installed on your system.
 * Using bash tool you can start GUI applications, but you need to set export DISPLAY=:1 and use a subshell. For example "(DISPLAY=:1 xterm &)". GUI apps run with bash tool will appear within your desktop environment, but they may take some time to appear. Take a screenshot to confirm it did.
-* When using your bash tool with commands that are expected to output very large quantities of text, redirect into a tmp file and use str_replace_editor or `grep -n -B <lines before> -A <lines after> <query> <filename>` to confirm output.
+* When using your bash tool with commands that are expected to output very large quantities of text, redirect into a tmp file and use str_replace_based_edit_tool or `grep -n -B <lines before> -A <lines after> <query> <filename>` to confirm output.
 * When viewing a page it can be helpful to zoom out so that you can see everything on the page.  Either that, or make sure you scroll down to see everything before deciding something isn't available.
 * When using your computer function calls, they take a while to run and send back to you.  Where possible/feasible, try to chain multiple of these calls all into one function calls request.
 * The current date is {datetime.today().strftime('%A, %B %-d, %Y')}.
@@ -71,7 +71,7 @@ SYSTEM_PROMPT = f"""<SYSTEM_CAPABILITY>
 
 <IMPORTANT>
 * When using Firefox, if a startup wizard appears, IGNORE IT.  Do not even click "skip this step".  Instead, click on the address bar where it says "Search or enter address", and enter the appropriate search term or URL there.
-* If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your StrReplaceEditTool.
+* If the item you are looking at is a pdf, if after taking a single screenshot of the pdf it seems that you want to read the entire document instead of trying to continue to read the pdf from your screenshots + navigation, determine the URL, use curl to download the pdf, install and use pdftotext to convert it to a text file, and then read that text file directly with your str_replace_based_edit_tool.
 * When inputting text into a text field, you must wait for 2 seconds and then you must confirm that the text has been entered correctly by checking the text field after you have entered the text. Make sure to check for any extra spaces or characters that may have been added. Make sure to check for any typos. Make sure to check for any missing characters. Before submitting, ALWAYS take a screenshot of the text field to confirm that the text has been entered correctly. Only proceed to the next step if the text has been entered correctly.
 </IMPORTANT>"""
 
@@ -387,15 +387,23 @@ async def sampling_loop(
             tool_result_content: list[BetaToolResultBlockParam] = []
             for content_block in response_params:
                 output_callback(content_block)
-                if content_block["type"] == "tool_use":
+
+                if (
+                    isinstance(content_block, dict)
+                    and content_block.get("type") == "tool_use"
+                ):
+                    # Type narrowing for tool use blocks
+                    tool_use_block = cast(BetaToolUseBlockParam, content_block)
                     result = await tool_collection.run(
-                        name=content_block["name"],
-                        tool_input=cast(dict[str, Any], content_block["input"]),
+                        name=tool_use_block["name"],
+                        tool_input=cast(
+                            dict[str, Any], tool_use_block.get("input", {})
+                        ),
                     )
                     tool_result_content.append(
-                        _make_api_tool_result(result, content_block["id"])
+                        _make_api_tool_result(result, tool_use_block["id"])
                     )
-                    tool_output_callback(result, content_block["id"])
+                    tool_output_callback(result, tool_use_block["id"])
 
             if not tool_result_content:
                 if current_conversation_id is not None:
@@ -544,7 +552,8 @@ def _inject_prompt_caching(
                     {"type": "ephemeral"}
                 )
             else:
-                content[-1].pop("cache_control", None)  # type: ignore
+                if isinstance(content[-1], dict) and "cache_control" in content[-1]:
+                    del content[-1]["cache_control"]  # type: ignore
                 # we'll only every have one extra turn per loop
                 break
 
