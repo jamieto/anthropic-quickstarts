@@ -230,6 +230,7 @@ async def sampling_loop(
     tool_version: ToolVersion,
     thinking_budget: int | None = None,
     token_efficient_tools_beta: bool = False,
+    use_extended_context: bool = False,
 ):
     """
     Agentic sampling loop for the assistant/tool interaction of computer use.
@@ -298,6 +299,8 @@ async def sampling_loop(
         betas = [tool_group.beta_flag] if tool_group.beta_flag else []
         if token_efficient_tools_beta:
             betas.append("token-efficient-tools-2025-02-19")
+        if use_extended_context:
+            betas.append("context-1m-2025-08-07")
         image_truncation_threshold = only_n_most_recent_images or 0
         if provider == APIProvider.ANTHROPIC:
             client = Anthropic(api_key=api_key, max_retries=4)

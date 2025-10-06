@@ -18,7 +18,7 @@ from computer_use_demo.loop import (
 
 PROVIDER_TO_DEFAULT_MODEL_NAME: dict[APIProvider, str] = {
     # APIProvider.ANTHROPIC: "claude-3-7-sonnet-20250219",
-    APIProvider.ANTHROPIC: "claude-sonnet-4-20250514",
+    APIProvider.ANTHROPIC: "claude-sonnet-4-5-20250929",
     APIProvider.BEDROCK: "anthropic.claude-3-5-sonnet-20241022-v2:0",
     APIProvider.VERTEX: "claude-3-5-sonnet-v2@20241022",
 }
@@ -35,6 +35,7 @@ class MessageRequest(BaseModel):
     provider: Optional[str] = "anthropic"
     only_n_most_recent_images: Optional[int] = 10
     max_tokens: Optional[int] = 4096
+    use_extended_context: bool = False
 
 
 class MessageResponse(BaseModel):
@@ -88,7 +89,7 @@ async def process_message(request: MessageRequest):
 
         # Set up provider
         provider = APIProvider.ANTHROPIC
-        model = PROVIDER_TO_DEFAULT_MODEL_NAME[provider]
+        model = request.model or PROVIDER_TO_DEFAULT_MODEL_NAME[provider]
 
         # Create conversation store
         conversation_store = await ConversationStore.create()
@@ -118,6 +119,7 @@ async def process_message(request: MessageRequest):
                 tool_version="computer_use_20250124",
                 thinking_budget=4096,
                 token_efficient_tools_beta=False,
+                use_extended_context=request.use_extended_context,
             )
         )
 
