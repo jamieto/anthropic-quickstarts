@@ -56,6 +56,10 @@ RUN git clone --branch v1.5.0 https://github.com/novnc/noVNC.git /opt/noVNC && \
     git clone --branch v0.12.0 https://github.com/novnc/websockify /opt/noVNC/utils/websockify && \
     ln -s /opt/noVNC/vnc.html /opt/noVNC/index.html
 
+# Install AWS CLI
+RUN apt-get install -y python3-pip && \
+    pip3 install awscli
+
 # setup user
 ENV USERNAME=computeruse
 ENV HOME=/home/$USERNAME
@@ -86,12 +90,37 @@ ENV PATH="$HOME/.pyenv/shims:$HOME/.pyenv/bin:$PATH"
 RUN python -m pip install --upgrade pip==23.1.2 setuptools==58.0.4 wheel==0.40.0 && \
     python -m pip config set global.disable-pip-version-check true
 
+RUN python -m pip install \
+    requests \
+    beautifulsoup4 \
+    pandas \
+    numpy \
+    matplotlib \
+    seaborn \
+    pillow \
+    openpyxl \
+    python-docx \
+    PyPDF2 \
+    pytest \
+    black \
+    flake8 \
+    ipython \
+    jupyter \
+    scikit-learn \
+    pyyaml \
+    boto3 \
+    psycopg2-binary \
+    sqlalchemy \
+    redis \
+    celery
+
 # only reinstall if requirements.txt changes
 COPY --chown=$USERNAME:$USERNAME computer_use_demo/requirements.txt $HOME/computer_use_demo/requirements.txt
 RUN python -m pip install -r $HOME/computer_use_demo/requirements.txt
 
 # setup desktop env & app
 COPY --chown=$USERNAME:$USERNAME image/ $HOME
+RUN sudo chown -R $USERNAME:$USERNAME $HOME/.cache 2>/dev/null || true
 COPY --chown=$USERNAME:$USERNAME computer_use_demo/ $HOME/computer_use_demo/
 
 ARG DISPLAY_NUM=1

@@ -61,7 +61,7 @@ class EditTool20250124(BaseAnthropicTool):
             return await self.view(_path, view_range)
         elif command == "create":
             if file_text is None:
-                raise ToolError("Parameter `file_text` is required for command: create")
+                file_text = ""
             self.write_file(_path, file_text)
             self._file_history[_path].append(file_text)
             return ToolResult(output=f"File created successfully at: {_path}")
@@ -334,7 +334,7 @@ class EditTool20250429(BaseAnthropicTool):
             return await self.view(_path, view_range)
         elif command == "create":
             if file_text is None:
-                raise ToolError("Parameter `file_text` is required for command: create")
+                file_text = ""
             self.write_file(_path, file_text)
             self._file_history[_path].append(file_text)
             return ToolResult(output=f"File created successfully at: {_path}")
@@ -432,6 +432,11 @@ class EditTool20250429(BaseAnthropicTool):
 
     def str_replace(self, path: Path, old_str: str, new_str: str | None):
         """Implement the str_replace command, which replaces old_str with new_str in the file content"""
+
+        if not old_str:
+            return ToolResult(
+                error="old_str cannot be empty. Use 'create' command to create a new file with content, or specify the exact text to replace."
+            )
         # Read the file content
         file_content = self.read_file(path).expandtabs()
         old_str = old_str.expandtabs()

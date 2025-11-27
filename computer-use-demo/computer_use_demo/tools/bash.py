@@ -138,6 +138,7 @@ class BashTool20250124(BaseAnthropicTool):
             await self._session.start()
 
         if command is not None:
+            command = "pwd"
             return await self._session.run(command)
 
         raise ToolError("no command provided.")
