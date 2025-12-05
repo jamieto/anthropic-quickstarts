@@ -169,7 +169,7 @@ async def process_message(request: MessageRequest):
                 api_response_callback=api_callback,
                 api_key=api_key,
                 only_n_most_recent_images=90,
-                max_tokens=8192,
+                max_tokens=32768,
                 conversation_store=conversation_store,
                 current_conversation_id=current_conversation_id,
                 conversation_type="single",
@@ -184,8 +184,16 @@ async def process_message(request: MessageRequest):
         def task_done_callback(t):
             if t.exception():
                 logger.error(f"Background task failed: {t.exception()}")
+                asyncio.create_task(_mark_failed(current_conversation_id, str(t.exception())))
             else:
                 logger.info(f"Background task completed")
+
+        async def _mark_failed(conversation_id: int, error_message: str):
+            try:
+                conversation_store = await ConversationStore.create()
+                await conversation_store.update_status(conversation_id, "failed", error_message)
+            except Exception as e:
+                logger.error(f"Failed to mark conversation {conversation_id} as failed: {e}")
         
         task.add_done_callback(task_done_callback)
         

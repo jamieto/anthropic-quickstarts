@@ -5,6 +5,7 @@ Agentic sampling loop that calls the Claude API and local implementation of anth
 import json
 import os
 import platform
+import time
 from collections.abc import Callable
 from datetime import datetime
 from enum import StrEnum
@@ -55,6 +56,47 @@ class APIProvider(StrEnum):
 
 S3_BUCKET = os.getenv('S3_BUCKET', 'your-default-bucket')
 CHAT_ID = os.getenv('CHAT_ID', 'default-chat-id')
+PROJECT_STATUS_PATH = "/home/computeruse/project/project_status.md"
+PROJECT_LOG_PATH = "/home/computeruse/project/project_log.md"
+
+def _load_project_memory() -> str:
+    """Load current project context - status first, then recent log entries."""
+    memory = ""
+    
+    # Always load status (small, critical)
+    if os.path.exists(PROJECT_STATUS_PATH):
+        try:
+            with open(PROJECT_STATUS_PATH, "r") as f:
+                content = f.read()
+                memory += f"""
+<PROJECT_STATUS>
+{content}
+</PROJECT_STATUS>
+"""
+        except Exception as e:
+            logger.error(f"Failed to read project status: {e}")
+    
+    # Load log (may be larger, but important for context)
+    if os.path.exists(PROJECT_LOG_PATH):
+        try:
+            with open(PROJECT_LOG_PATH, "r") as f:
+                content = f.read()
+                # Optional: truncate to last N entries if file gets huge
+                memory += f"""
+<PROJECT_LOG>
+{content}
+</PROJECT_LOG>
+"""
+        except Exception as e:
+            logger.error(f"Failed to read project log: {e}")
+    
+    return memory
+
+def _ensure_project_dir():
+    """Ensure the project directory exists."""
+    project_dir = os.path.dirname(PROJECT_STATUS_PATH)
+    if not os.path.exists(project_dir):
+        os.makedirs(project_dir, exist_ok=True)
 
 # This system prompt is optimized for the Docker environment in this repository and
 # specific tool combinations enabled.
@@ -129,303 +171,43 @@ Your workspace has six directories with clear purposes:
    - Don't save important work here or work that can be used later as evidence or reference
 
 **WORKFLOW:**
-1. User uploads files → /uploads/
-2. You work privately → /work/ (drafts, experiments)
-3. You share with team → /project/ (the actual deliverable + supporting work)
-4. When complete → package from /project/ and upload to S3
+1. User uploads files → /home/computeruse/uploads/
+2. You work privately → /home/computeruse/work/ (drafts, experiments)
+3. You share with team → /home/computeruse/project/ (the actual deliverable + supporting work)
+4. When complete → package from /home/computeruse/project/ and upload to S3
 
 **VISIBILITY:**
-- /uploads/ - All team members can READ
-- /work/ - Only YOU can access
-- /project/ - All team members can READ and WRITE
-- /library/ - All team members can READ
-- /tools/ - All team members can READ and CREATE new tools
-- /tmp/ - Only YOU can access
+- /home/computeruse/uploads/ - All team members can READ
+- /home/computeruse/work/ - Only YOU can access
+- /home/computeruse/project/ - All team members can READ and WRITE
+- /home/computeruse/library/ - All team members can READ
+- /home/computeruse/tools/ - All team members can READ and CREATE new tools
+- /home/computeruse/tmp/ - Only YOU can access
 </DIRECTORY_STRUCTURE>
 
 <TOOL_SPECIFICATIONS>
-YOU HAVE 3 TOOLS AVAILABLE. HERE IS EXACTLY HOW TO USE EACH ONE:
+You have 3 tools available:
 
-================================================================================
-1. BASH TOOL - Execute shell commands
-================================================================================
+**1. bash** - Execute shell commands
+   - Use for: running commands, installing packages, system operations
+   - Example: {"command": "ls -la /home/computeruse/project/"}
+   - Timeout: 120 seconds. If timeout occurs, restart with {"restart": true}
 
-REQUIRED PARAMETERS:
-- command (string): The bash command to execute
+**2. str_replace_editor** - Create, view, and edit files
+   - **create**: Create new file (REQUIRES file_text with complete content)
+   - **view**: View file or directory contents
+   - **str_replace**: Replace text (old_str must exist exactly once)
+   - **insert**: Insert text at line number (requires insert_line and new_str)
+   - **undo_edit**: Undo last edit
+   - All paths must be absolute (start with /)
 
-OPTIONAL PARAMETERS:
-- restart (bool): Set to true to restart the bash session
+**3. computer** - GUI interaction
+   - screenshot, mouse_move, left_click, right_click, type, key, scroll
 
-CORRECT USAGE:
-{
-  "name": "bash",
-  "input": {
-    "command": "ls -la /home/computeruse/project/"
-  }
-}
-
-{
-  "name": "bash",
-  "input": {
-    "command": "cat /home/computeruse/uploads/data.csv | head -n 10"
-  }
-}
-
-{
-  "name": "bash",
-  "input": {
-    "command": "pip install pandas --break-system-packages"
-  }
-}
-
-{
-  "name": "bash",
-  "input": {
-    "restart": true
-  }
-}
-
-WRONG - WILL FAIL:
-{
-  "name": "bash",
-  "input": {}
-}
-Error: "no command provided."
-
- BASH TIMEOUT HANDLING:
-- Bash commands have a 120-second timeout
-- If a command times out, you MUST restart bash before continuing:
-  {"name": "bash", "input": {"restart": true}}
-- For large file creation, use str_replace_editor instead of bash heredoc
-- If you must use bash heredoc, keep content under 5000 lines
-
-================================================================================
-2. STR_REPLACE_EDITOR TOOL - Create, view, and edit files
-================================================================================
-
-This tool has 5 commands. Each requires different parameters:
-
---- COMMAND: "create" ---
-Creates a new file. MUST include complete file content. USE THIS FOR ALL FILE CREATION, especially large files.
-
-PREFERRED OVER: bash heredoc for any file with content
-ADVANTAGE: No size limits, no timeout issues, designed for this purpose
-REQUIRED: command, path, file_text
-
-Example:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "create",
-    "path": "/home/computeruse/project/script.py",
-    "file_text": "#!/usr/bin/env python3\n\nimport os\nimport sys\n\ndef main():\n    print('Hello World')\n\nif __name__ == '__main__':\n    main()\n"
-  }
-}
-
-Example - Creating a large HTML file:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "create",
-    "path": "/home/computeruse/project/presentation.html",
-    "file_text": "<!DOCTYPE html>\n<html>\n[thousands of lines of HTML]\n</html>"
-  }
-}
-
-COMMON MISTAKE - DO NOT DO THIS:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "create",
-    "path": "/home/computeruse/project/script.py"
-  }
-}
-Error: "Parameter `file_text` is required for command: create"
-FIX: You MUST include file_text with complete file contents
-
---- COMMAND: "view" ---
-View file contents or list directory contents.
-
-REQUIRED: command, path
-OPTIONAL: view_range (list of 2 integers [start_line, end_line])
-
-Examples:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "view",
-    "path": "/home/computeruse/project/script.py"
-  }
-}
-
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "view",
-    "path": "/home/computeruse/project/script.py",
-    "view_range": [1, 50]
-  }
-}
-
---- COMMAND: "str_replace" ---
-Replace exact text in a file. The old_str MUST appear exactly once.
-
-REQUIRED: command, path, old_str
-OPTIONAL: new_str (defaults to empty string for deletion)
-
-Example:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "str_replace",
-    "path": "/home/computeruse/project/script.py",
-    "old_str": "print('Hello World')",
-    "new_str": "print('Hello Universe')"
-  }
-}
-
---- COMMAND: "insert" ---
-Insert text at a specific line number.
-
-REQUIRED: command, path, insert_line, new_str
-
-Example:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "insert",
-    "path": "/home/computeruse/project/script.py",
-    "insert_line": 5,
-    "new_str": "# This is a new comment\n"
-  }
-}
-
---- COMMAND: "undo_edit" ---
-Undo the last edit to a file.
-
-REQUIRED: command, path
-
-Example:
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "undo_edit",
-    "path": "/home/computeruse/project/script.py"
-  }
-}
-
-IMPORTANT NOTES FOR STR_REPLACE_EDITOR:
-- Paths MUST be absolute (start with /)
-- For create: file_text is ALWAYS required, even for empty files
-- For str_replace: old_str must appear exactly once in the file
-- For large files, include complete content - do not truncate
-
-================================================================================
-3. COMPUTER TOOL - Control mouse, keyboard, take screenshots
-================================================================================
-
-Common actions:
-- screenshot: Take a screenshot
-- mouse_move: Move cursor to coordinate [x, y]
-- left_click, right_click, double_click: Click actions
-- type: Type text
-- key: Press keyboard keys (e.g., "Return", "ctrl+c")
-- scroll: Scroll with scroll_direction ("up"/"down") and scroll_amount
-
-All coordinates are [x, y] format. See error messages for required parameters.
-
-================================================================================
-CRITICAL RULES - READ CAREFULLY
-================================================================================
-
-1. NEVER call a tool with empty input: {}
-   Every tool call MUST have parameters.
-   Check the examples above for correct format.
-
-2. BASH TOOL MUST have "command" parameter
-   Even for simple commands: {"command": "ls"}
-   WRONG: {} or {"input": {}}
-
-3. STR_REPLACE_EDITOR "create" MUST have "file_text" parameter
-   Include complete file contents.
-   WRONG: {"command": "create", "path": "..."} without file_text
-
-4. READ ERROR MESSAGES AND FIX THEM
-   - If you get "no command provided" -> add the command parameter
-   - If you get "file_text is required" -> add file_text to your create call
-   - If you get "old_str is required" -> add old_str to your str_replace call
-   - DO NOT repeat the same mistake
-
-5. PARAMETER TYPES MATTER
-   - coordinate: [int, int] example: [500, 300]
-   - view_range: [int, int] example: [1, 100]
-   - scroll_amount: int example: 5
-   - duration: float example: 1.5
-
-6. ABSOLUTE PATHS REQUIRED FOR FILE OPERATIONS
-   CORRECT: /home/computeruse/project/file.py
-   WRONG: project/file.py (missing leading /)
-
-7. FILE CREATION STRATEGY
-   - For large files: Include complete content in file_text
-   - If hitting token limits: Use bash with heredoc instead:
-     {"command": "cat > /path/file.py << 'EOF'\n[complete content]\nEOF"}
-
-================================================================================
-ERROR RECOVERY
-================================================================================
-
-If you receive an error, follow these steps:
-1. READ the error message carefully
-2. CHECK the examples above for the correct format
-3. IDENTIFY what parameter you forgot or got wrong
-4. MAKE the correct call with ALL required parameters
-5. DO NOT repeat the same call that just failed
-
-Common error patterns and fixes:
-
-Error: "no command provided"
-Fix: Add the command parameter to bash tool
-{
-  "name": "bash",
-  "input": {
-    "command": "your_bash_command_here"
-  }
-}
-
-Error: "Parameter `file_text` is required for command: create"
-Fix: Add file_text parameter with complete file contents
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "create",
-    "path": "/absolute/path/to/file",
-    "file_text": "complete file contents here"
-  }
-}
-
-Error: "coordinate is required for mouse_move"
-Fix: Add coordinate parameter as a list of two integers
-{
-  "name": "computer",
-  "input": {
-    "action": "mouse_move",
-    "coordinate": [x, y]
-  }
-}
-
-Error: "old_str is required for str_replace"
-Fix: Add old_str parameter
-{
-  "name": "str_replace_editor",
-  "input": {
-    "command": "str_replace",
-    "path": "/path/to/file",
-    "old_str": "text to find",
-    "new_str": "replacement text"
-  }
-}
-
+**TOOL SELECTION:**
+- Creating/editing files → str_replace_editor (NOT bash heredoc)
+- Running commands → bash
+- GUI interaction → computer
 </TOOL_SPECIFICATIONS>
 
 <TOOL_SELECTION_STRATEGY>
@@ -620,23 +402,23 @@ Then provide the single download link to the user. This makes it easier for the 
 <COLLABORATION>
 **WORKING WITH YOUR TEAM:**
 
-* **Shared workspace:** /project/
-* **Your private space:** /work/
-* **Team visibility:** Others see everything in /project/, nothing in /work/
+* **Shared workspace:** /home/computeruse/project/
+* **Your private space:** /home/computeruse/work/
+* **Team visibility:** Others see everything in /home/computeruse/project/, nothing in /home/computeruse/work/
 
 **Best practices:**
-- Check /project/ to see what team members have already done
+- Check /home/computeruse/project/ to see what team members have already done
 - Build upon their work rather than duplicating
 - Organize clearly so others can understand and use your work
 - Add README files or comments when helpful
 - Don't overwrite others' work - communicate through file organization
 
 **Example collaboration:**
-Agent 1 creates: /project/webapp/structure/
-Agent 2 adds: /project/webapp/backend/
-Agent 3 adds: /project/webapp/frontend/
-Agent 4 polishes: /project/webapp/ (final touches)
-Final: Package /project/webapp/ and upload to S3
+Agent 1 creates: /home/computeruse/project/webapp/structure/
+Agent 2 adds: /home/computeruse/project/webapp/backend/
+Agent 3 adds: /home/computeruse/project/webapp/frontend/
+Agent 4 polishes: /home/computeruse/project/webapp/ (final touches)
+Final: Package /home/computeruse/project/webapp/ and upload to S3
 </COLLABORATION>
 
 <SYSTEM_ACCESS>
@@ -671,6 +453,103 @@ Final: Package /project/webapp/ and upload to S3
   5. Only proceed if the text is exactly correct
 * This prevents form submission errors and data loss
 </IMPORTANT_BEHAVIORAL_NOTES>"""
+
+SYSTEM_PROMPT += f"""
+
+<PROJECT_MEMORY>
+You coordinate with other agents using TWO files in /home/computeruse/project/:
+
+## 1. STATUS FILE: {PROJECT_STATUS_PATH}
+**Purpose:** Current project state - what exists RIGHT NOW
+**Operation:** OVERWRITE (not append)
+**When to update:** When you START work and when you FINISH
+
+**Format:**
+```markdown
+# Project Status
+**Last Updated:** [YYYY-MM-DD HH:MM] by [Your Agent Name]
+**State:** [Not Started | In Progress | Blocked | Complete]
+
+## Current Deliverables
+- [Component]: [Status] ([key files])
+
+## Active Work
+[What you're doing right now, or "None"]
+
+## Blocked
+[Any blockers, or "None"]
+
+## Next Up
+[What should happen next]
+```
+
+## 2. LOG FILE: {PROJECT_LOG_PATH}
+**Purpose:** Historical record of completed work
+**Operation:** APPEND ONLY (never modify previous entries)
+**When to update:** When you COMPLETE a task
+
+**Format:**
+```markdown
+## [Agent-Name] Task Description - YYYY-MM-DD HH:MM
+**Delivered:** [1-2 sentence summary of what you built/did]
+**Files:** [Full paths to key files created/modified]
+**Decisions:** [Key choices you made and why]
+**Handoff:** [What the next agent needs to know]
+
+---
+```
+
+## YOUR WORKFLOW:
+1. **ON START:** Read both files → Update STATUS (claim your work in "Active Work")
+2. **DURING WORK:** Focus on your task (no logging needed)
+3. **ON FINISH:** Update STATUS (new state, clear Active Work) → Append to LOG (your summary)
+
+## CRITICAL RULES:
+- ALWAYS update both files before you finish
+- STATUS: Overwrite entire file with current state
+- LOG: Only append, never modify existing entries
+- Include FULL PATHS to files you create
+- Explain your DECISIONS so future agents understand your choices
+</PROJECT_MEMORY>
+"""
+
+
+# === COMPLETION PROMPT (used to force logging before exit) ===
+LOG_COMPLETION_MESSAGE = """MANDATORY: Update project memory before finishing.
+
+You must update BOTH files now:
+
+**1. STATUS FILE ({status_path})** - OVERWRITE with current state:
+```markdown
+# Project Status
+**Last Updated:** {timestamp} by Agent
+**State:** [Complete or current state]
+
+## Current Deliverables
+[List what exists now with file paths]
+
+## Active Work
+None
+
+## Blocked
+None
+
+## Next Up
+[What should happen next, or "Project complete"]
+```
+
+**2. LOG FILE ({log_path})** - APPEND your entry:
+```markdown
+## [Agent] Task Description - {timestamp}
+**Delivered:** [What you accomplished]
+**Files:** [Key files with full paths]
+**Decisions:** [Why you made key choices]
+**Handoff:** [What next agent needs to know]
+
+---
+```
+
+Use str_replace_editor to make these updates NOW."""
 
 class ConversationStore:
     def __init__(self, pool: aiomysql.Pool):
@@ -813,37 +692,179 @@ class ConversationStore:
                 )
                 await conn.commit()
 
+    async def update_status(
+        self,
+        conversation_id: int,
+        status: str,
+        message: Optional[str] = None,
+    ) -> None:
+        """Update the status and related fields in the database."""
+        now = datetime.utcnow()
 
-async def _update_status(
-    conversation_store: ConversationStore,
-    conversation_id: int,
-    status: str,
-    message: Optional[str] = None,
-):
-    """A helper to update the status and related fields in the database."""
-    now = datetime.utcnow()
-    pool = conversation_store.pool
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                query = """
+                    UPDATE computer_use_chats
+                    SET status = %s, status_updated_at = %s, status_message = %s
+                """
+                params: list = [status, now, message]
 
-    async with pool.acquire() as conn:
-        async with conn.cursor() as cur:
-            # The base query updates the core status fields
-            query = """
-                UPDATE computer_use_chats
-                SET status = %s, status_updated_at = %s, status_message = %s
-            """
-            params = [status, now, message]
+                if status == "completed":
+                    query += ", completed_at = %s"
+                    params.append(now)
 
-            # If the new status is 'completed', also set the completed_at timestamp
-            if status == "completed":
-                query += ", completed_at = %s"
-                params.append(now)
+                query += " WHERE id = %s"
+                params.append(conversation_id)
 
-            query += " WHERE id = %s"
-            params.append(conversation_id)
+                await cur.execute(query, tuple(params))
+                await conn.commit()
 
-            await cur.execute(query, tuple(params))
-            await conn.commit()
+    async def store_api_request(
+        self,
+        conversation_id: int,
+        iteration: int,
+        request_data: dict,
+    ):
+        """Store full API request for debugging."""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    INSERT INTO computer_use_api_requests (
+                        computer_use_chat_id, iteration, request_data, created_at
+                    ) VALUES (%s, %s, %s, %s)
+                    """,
+                    (
+                        conversation_id,
+                        iteration,
+                        json.dumps(request_data, default=str),
+                        datetime.utcnow(),
+                    ),
+                )
+                await conn.commit()
 
+    async def update_api_request_response(
+        self,
+        conversation_id: int,
+        iteration: int,
+        response_data: dict,
+    ):
+        """Update API request row with response data."""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute(
+                    """
+                    UPDATE computer_use_api_requests 
+                    SET response_data = %s, response_at = %s
+                    WHERE computer_use_chat_id = %s AND iteration = %s
+                    """,
+                    (
+                        json.dumps(response_data, default=str),
+                        datetime.utcnow(),
+                        conversation_id,
+                        iteration,
+                    ),
+                )
+                await conn.commit()
+
+def _update_status_file_on_exit(exit_status: str, agent_name: str = "Agent"):
+    """Update the status file when agent exits abnormally."""
+    _ensure_project_dir()
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    
+    try:
+        # Read existing status or create new
+        existing_content = ""
+        if os.path.exists(PROJECT_STATUS_PATH):
+            with open(PROJECT_STATUS_PATH, "r") as f:
+                existing_content = f.read()
+        
+        # If agent didn't complete normally, add a warning to status
+        if exit_status not in ("completed",):
+            warning = f"\n\n> ⚠️ **System Note:** {agent_name} exited with status '{exit_status}' at {timestamp}. Work may be incomplete.\n"
+            
+            with open(PROJECT_STATUS_PATH, "a") as f:
+                f.write(warning)
+                
+    except Exception as e:
+        logger.error(f"Failed to update status file on exit: {e}")
+
+
+def _append_system_log_entry(exit_status: str, agent_name: str = "Agent"):
+    """Append a system entry to the log file when agent exits."""
+    _ensure_project_dir()
+    timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+    
+    try:
+        if exit_status == "completed":
+            # Agent completed normally - it should have logged already
+            # Just add a small system note
+            log_entry = f"\n> [SYSTEM] {agent_name} completed successfully at {timestamp}\n"
+        elif exit_status in ("cancelled", "paused", "stopping"):
+            log_entry = f"""
+## [SYSTEM] {agent_name} Interrupted - {timestamp}
+**Status:** {exit_status}
+**Note:** Agent was interrupted by user. Check status file for current state.
+
+---
+"""
+        else:
+            # Failed or unknown
+            log_entry = f"""
+## [SYSTEM] {agent_name} Stopped Unexpectedly - {timestamp}
+**Status:** {exit_status}
+**Note:** Agent did not complete normally. Review recent work and status file.
+
+---
+"""
+        
+        with open(PROJECT_LOG_PATH, "a") as f:
+            f.write(log_entry)
+            
+    except Exception as e:
+        logger.error(f"Failed to append system log entry: {e}")
+
+
+from typing import Optional
+
+class HeartbeatTracker:
+    def __init__(self, store: ConversationStore, conv_id: int, min_interval: int = 30):
+        self.store = store
+        self.conv_id = conv_id
+        self.min_interval = min_interval
+        self.last_beat: float = 0
+    
+    async def beat(self, phase: Optional[str] = None) -> None:  # Fixed
+        now = time.time()
+        if now - self.last_beat >= self.min_interval:
+            await self._update(phase)
+            self.last_beat = now
+    
+    async def _update(self, phase: Optional[str] = None) -> None:  # Fixed
+        try:
+            async with self.store.pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    # Only update status_message if phase is provided
+                    if phase:
+                        await cur.execute(
+                            """UPDATE computer_use_chats 
+                               SET last_heartbeat_at = %s, 
+                                   updated_at = %s,
+                                   status_message = %s 
+                               WHERE id = %s""",
+                            (datetime.utcnow(), datetime.utcnow(), phase, self.conv_id)
+                        )
+                    else:
+                        await cur.execute(
+                            """UPDATE computer_use_chats 
+                               SET last_heartbeat_at = %s, 
+                                   updated_at = %s
+                               WHERE id = %s""",
+                            (datetime.utcnow(), datetime.utcnow(), self.conv_id)
+                        )
+                    await conn.commit()
+        except Exception as e:
+            logger.warning(f"Heartbeat failed: {e}")
 
 async def sampling_loop(
     *,
@@ -858,7 +879,7 @@ async def sampling_loop(
     ],
     api_key: str,
     only_n_most_recent_images: int | None = None,
-    max_tokens: int = 4096,
+    max_tokens: int = 32768,
     conversation_store: Optional[ConversationStore] = None,
     current_conversation_id: Optional[int] = None,
     conversation_type: str = "continuous",
@@ -866,6 +887,7 @@ async def sampling_loop(
     thinking_budget: int | None = None,
     token_efficient_tools_beta: bool = False,
     use_extended_context: bool = False,
+    agent_name: str = "Agent", 
 ):
     """
     Agentic sampling loop for the assistant/tool interaction of computer use.
@@ -874,9 +896,7 @@ async def sampling_loop(
     logger.info(f"[Loop] Model: {model}, Provider: {provider}")
     logger.debug(f"[Loop] Tool version: {tool_version}")
 
-    tool_group = TOOL_GROUPS_BY_VERSION[tool_version]
-    tool_collection = ToolCollection(*(ToolCls() for ToolCls in tool_group.tools))
-    logger.debug(f"[Loop] Tools loaded: {[t.name for t in tool_collection.tools]}")
+    _ensure_project_dir()
 
     tool_group = TOOL_GROUPS_BY_VERSION[tool_version]
     subagent_tool = SubAgentTool()
@@ -884,12 +904,14 @@ async def sampling_loop(
         *(ToolCls() for ToolCls in tool_group.tools),
         subagent_tool  # Include it during initialization
     )
-    logger.debug(f"[Loop] SubAgentTool added")
+    logger.debug(f"[Loop] Tools loaded: {[t.name for t in tool_collection.tools]}")
     
+    project_memory = _load_project_memory()
+    full_system_prompt = f"{SYSTEM_PROMPT}\n{project_memory}\n{system_prompt_suffix}"
 
     system = BetaTextBlockParam(
         type="text",
-        text=f"{SYSTEM_PROMPT}{' ' + system_prompt_suffix if system_prompt_suffix else ''}",
+        text=full_system_prompt,
     )
 
     # Create conversation store if not provided
@@ -906,274 +928,391 @@ async def sampling_loop(
             model=model,
             conv_type=conversation_type,
             status="running",
+            agent_name=agent_name,
         )
 
         logger.info(f"[Loop] Created conversation: {current_conversation_id}")
+
+    heartbeat_tracker = HeartbeatTracker(conversation_store, current_conversation_id)
+    await heartbeat_tracker.beat("starting")
 
     # Set the conversation ID on SubAgentTool so it can track hierarchy
     subagent_tool.my_conversation_id = current_conversation_id
     logger.debug(f"[Loop] Set subagent_tool.my_conversation_id = {current_conversation_id}")
 
     iteration = 0
+    prompted_for_log = False  # Track if we've asked agent to log
+    final_status = "running"  # Track exit status for finally block
 
-    while True:
-        iteration += 1
-        logger.info(f"[Loop] === Iteration {iteration} ===")
+    try:
+        while True:
+            iteration += 1
+            logger.info(f"[Loop] === Iteration {iteration} ===")
 
-        # Check for pause/stop signals at the start of each iteration
-        try:
-            async with conversation_store.pool.acquire() as conn:
-                async with conn.cursor() as cur:
-                    await cur.execute(
-                        "SELECT status FROM computer_use_chats WHERE id = %s",
-                        (current_conversation_id,),
-                    )
-                    result = await cur.fetchone()
-                    current_status = result[0] if result else "failed"
-                    logger.debug(f"[Loop] Current status from DB: {current_status}")
-
-            if current_status == "stopping":
-                logger.info(f"[Loop] Received stop signal, exiting")
-                await _update_status(
-                    conversation_store,
-                    current_conversation_id,
-                    "cancelled",
-                    "Task cancelled by user.",
-                )
-                break  # Exit the loop gracefully
-
-            if current_status == "pausing":
-                logger.info(f"[Loop] Received pause signal, exiting")
-                await _update_status(
-                    conversation_store,
-                    current_conversation_id,
-                    "paused",
-                    "Task paused by user.",
-                )
-                break  # Exit the loop gracefully
-
-        except Exception as e:
-            logger.exception(f"[Loop] Error checking status: {e}")
-            await _update_status(
-                conversation_store,
-                current_conversation_id,
-                "failed",
-                f"Internal error during status check: {e}",
-            )
-            break
-
-        enable_prompt_caching = False
-        betas = [tool_group.beta_flag] if tool_group.beta_flag else []
-        if token_efficient_tools_beta:
-            betas.append("token-efficient-tools-2025-02-19")
-        if use_extended_context:
-            betas.append("context-1m-2025-08-07")
-        image_truncation_threshold = only_n_most_recent_images or 0
-        if provider == APIProvider.ANTHROPIC:
-            client = Anthropic(api_key=api_key, max_retries=4)
-            enable_prompt_caching = True
-        elif provider == APIProvider.VERTEX:
-            client = AnthropicVertex()
-        elif provider == APIProvider.BEDROCK:
-            client = AnthropicBedrock()
-
-        if enable_prompt_caching:
-            betas.append(PROMPT_CACHING_BETA_FLAG)
-            _inject_prompt_caching(messages)
-            # Because cached reads are 10% of the price, we don't think it's
-            # ever sensible to break the cache by truncating images
-            only_n_most_recent_images = 90
-            # Use type ignore to bypass TypedDict check until SDK types are updated
-            system["cache_control"] = {"type": "ephemeral"}  # type: ignore
-
-        if only_n_most_recent_images:
-            _maybe_filter_to_n_most_recent_images(
-                messages,
-                only_n_most_recent_images,
-                min_removal_threshold=image_truncation_threshold,
-            )
-        extra_body = {}
-        if thinking_budget:
-            # Ensure we only send the required fields for thinking
-            extra_body = {
-                "thinking": {"type": "enabled", "budget_tokens": thinking_budget}
-            }
-
-        # Store the last user message into db
-        last_user_message = messages[-1]
-        if last_user_message["role"] == "user":
-            if current_conversation_id is not None:
-
-                logger.debug(f"[Loop] Storing user message to DB")
-                try:
-                    await conversation_store.store_message(
-                        conversation_id=current_conversation_id,
-                        role="user",
-                        content=json.dumps(last_user_message["content"]),
-                        raw_content=json.dumps(last_user_message),
-                        tool_id="user-input",
-                    )
-                    logger.debug(f"[Loop] User message stored successfully")
-                except Exception as e:
-                    logger.exception(f"[Loop] Failed to store user message: {e}")
-
-        # Call the API
-        logger.info(f"[Loop] Calling Claude API...")
-        logger.debug(f"[Loop] Messages count: {len(messages)}")
-
-        # we use raw_response to provide debug information to streamlit. Your
-        # implementation may be able call the SDK directly with:
-        # `response = client.messages.create(...)` instead.
-        try:
-            raw_response = client.beta.messages.with_raw_response.create(
-                max_tokens=max_tokens if max_tokens is not None else 4096,
-                messages=messages,
-                model=model,
-                system=[system],
-                tools=tool_collection.to_params(),
-                betas=betas,
-                extra_body=extra_body,
-            )
-            # except (APIStatusError, APIResponseValidationError) as e:
-            #     api_response_callback(e.request, e.response, e)
-            #     return messages, current_conversation_id
-            # except APIError as e:
-            #     api_response_callback(e.request, e.body, e)
-            #     return messages, current_conversation_id
-
-            logger.info(f"[Loop] API call successful")
-
-            api_response_callback(
-                raw_response.http_response.request, raw_response.http_response, None
-            )
-
-            response = raw_response.parse()
-            logger.debug(f"[Loop] Response stop_reason: {response.stop_reason}")
-            logger.debug(f"[Loop] Response content blocks: {len(response.content)}")
-
-            response_params = _response_to_params(response)
-            response_message: BetaMessageParam = {
-                "role": "assistant",
-                "content": response_params,
-            }
-            messages.append(response_message)
-
-            if current_conversation_id is not None:
-                logger.debug(f"[Loop] Storing assistant message to DB")
-                try:
-                    await conversation_store.store_message(
-                        conversation_id=current_conversation_id,
-                        role="assistant",
-                        content=json.dumps(response_params),
-                        tool_id="response",
-                        raw_content=json.dumps(response_message),
-                    )
-                    logger.debug(f"[Loop] Assistant message stored successfully")
-                except Exception as e:
-                    logger.exception(f"[Loop] Failed to store assistant message: {e}")
-
-            tool_result_content: list[BetaToolResultBlockParam] = []
-            for content_block in response_params:
-                output_callback(content_block)
-
-                if (
-                    isinstance(content_block, dict)
-                    and content_block.get("type") == "tool_use"
-                ):
-                    # Type narrowing for tool use blocks
-                    tool_use_block = cast(BetaToolUseBlockParam, content_block)
-                    logger.info(f"[Loop] Executing tool: {tool_use_block['name']}")
-                    logger.debug(f"[Loop] Tool input: {tool_use_block.get('input', {})}")
-
-                    try:
-                        result = await tool_collection.run(
-                            name=tool_use_block["name"],
-                            tool_input=cast(
-                                dict[str, Any], tool_use_block.get("input", {})
-                            ),
+            # Check for pause/stop signals at the start of each iteration
+            try:
+                async with conversation_store.pool.acquire() as conn:
+                    async with conn.cursor() as cur:
+                        await cur.execute(
+                            "SELECT status FROM computer_use_chats WHERE id = %s",
+                            (current_conversation_id,),
                         )
-                    except Exception as tool_error:
-                        # Don't crash the loop - return error to Claude so it can retry
-                        logger.error(f"[Loop] Tool execution error: {tool_error}")
-                        result = ToolResult(error=f"Tool execution failed: {str(tool_error)}")
-                    
-                    tool_result_content.append(
-                        _make_api_tool_result(result, tool_use_block["id"])
-                    )
-                    tool_output_callback(result, tool_use_block["id"])
+                        result = await cur.fetchone()
+                        current_status = result[0] if result else "failed"
+                        logger.debug(f"[Loop] Current status from DB: {current_status}")
 
-            if not tool_result_content:
-                logger.info(f"[Loop] No tool calls, task complete!")
-                if current_conversation_id is not None:
-                    await _update_status(
-                        conversation_store,
+                if current_status == "stopping":
+                    logger.info(f"[Loop] Received stop signal, exiting")
+                    final_status = "cancelled"
+                    await conversation_store.update_status(
                         current_conversation_id,
-                        "completed",
-                        "Task finished successfully without further tool use.",
+                        "cancelled",
+                        "Task cancelled by user.",
                     )
-                    await conversation_store.mark_completed(current_conversation_id)
+                    break  # Exit the loop gracefully
+
+                if current_status == "pausing":
+                    logger.info(f"[Loop] Received pause signal, exiting")
+                    final_status = "paused"
+                    await conversation_store.update_status(
+                        current_conversation_id,
+                        "paused",
+                        "Task paused by user.",
+                    )
+                    break  # Exit the loop gracefully
+
+            except Exception as e:
+                logger.exception(f"[Loop] Error checking status: {e}")
+                final_status = "failed"
+                await conversation_store.update_status(
+                    current_conversation_id,
+                    "failed",
+                    f"Internal error during status check: {e}",
+                )
+                break
+
+            enable_prompt_caching = False
+            betas = [tool_group.beta_flag] if tool_group.beta_flag else []
+            if token_efficient_tools_beta:
+                betas.append("token-efficient-tools-2025-02-19")
+            if use_extended_context:
+                betas.append("context-1m-2025-08-07")
+            image_truncation_threshold = only_n_most_recent_images or 0
+
+            if provider == APIProvider.ANTHROPIC:
+                client = Anthropic(api_key=api_key, max_retries=4, timeout=httpx.Timeout(300.0, connect=10.0))
+                enable_prompt_caching = True
+            elif provider == APIProvider.VERTEX:
+                client = AnthropicVertex()
+            elif provider == APIProvider.BEDROCK:
+                client = AnthropicBedrock()
+
+            if enable_prompt_caching:
+                betas.append(PROMPT_CACHING_BETA_FLAG)
+                _inject_prompt_caching(messages)
+                # Because cached reads are 10% of the price, we don't think it's
+                # ever sensible to break the cache by truncating images
+                only_n_most_recent_images = 90
+                # Use type ignore to bypass TypedDict check until SDK types are updated
+                system["cache_control"] = {"type": "ephemeral"}  # type: ignore
+
+            if only_n_most_recent_images:
+                _maybe_filter_to_n_most_recent_images(
+                    messages,
+                    only_n_most_recent_images,
+                    min_removal_threshold=image_truncation_threshold,
+                )
+            extra_body = {}
+            # if thinking_budget:
+            #     # Ensure we only send the required fields for thinking
+            #     extra_body = {
+            #         "thinking": {"type": "enabled", "budget_tokens": thinking_budget}
+            #     }
+
+            # Store the last user message into db
+            last_user_message = messages[-1]
+            if last_user_message["role"] == "user":
+                if current_conversation_id is not None:
+
+                    logger.debug(f"[Loop] Storing user message to DB")
+                    try:
+                        await conversation_store.store_message(
+                            conversation_id=current_conversation_id,
+                            role="user",
+                            content=json.dumps(last_user_message["content"]),
+                            raw_content=json.dumps(last_user_message),
+                            tool_id="user-input",
+                        )
+                        logger.debug(f"[Loop] User message stored successfully")
+                    except Exception as e:
+                        logger.exception(f"[Loop] Failed to store user message: {e}")
+
+            try:
+                request_data = {
+                    "model": model,
+                    "system_prompt": full_system_prompt,
+                    "system_prompt_length": len(full_system_prompt),
+                    "messages": messages,
+                    "messages_count": len(messages),
+                    "tools": tool_collection.to_params(),
+                    "betas": betas,
+                    "extra_body": extra_body,
+                    "max_tokens": max_tokens,
+                }
+                await conversation_store.store_api_request(
+                    conversation_id=current_conversation_id,
+                    iteration=iteration,
+                    request_data=request_data,
+                )
+                logger.debug(f"[Loop] API request logged for iteration {iteration}")
+            except Exception as e:
+                logger.warning(f"[Loop] Failed to log API request: {e}")
+
+            # Call the API
+            logger.info(f"[Loop] Calling Claude API...")
+            logger.debug(f"[Loop] Messages count: {len(messages)}")
+
+            # we use raw_response to provide debug information to streamlit. Your
+            # implementation may be able call the SDK directly with:
+            # `response = client.messages.create(...)` instead.
+            try:
+
+                await heartbeat_tracker.beat("calling_api")
+
+                raw_response = client.beta.messages.with_raw_response.create(
+                    max_tokens=max_tokens if max_tokens is not None else 4096,
+                    messages=messages,
+                    model=model,
+                    system=[system],
+                    tools=tool_collection.to_params(),
+                    betas=betas,
+                    extra_body=extra_body,
+                )
+                # except (APIStatusError, APIResponseValidationError) as e:
+                #     api_response_callback(e.request, e.response, e)
+                #     return messages, current_conversation_id
+                # except APIError as e:
+                #     api_response_callback(e.request, e.body, e)
+                #     return messages, current_conversation_id
+
+                logger.info(f"[Loop] API call successful")
+
+                api_response_callback(
+                    raw_response.http_response.request, raw_response.http_response, None
+                )
+
+                await heartbeat_tracker.beat("processing_response")
+
+                response = raw_response.parse()
+
+                try:
+                    response_data = {
+                        "id": response.id,
+                        "model": response.model,
+                        "stop_reason": response.stop_reason,
+                        "stop_sequence": response.stop_sequence,
+                        "content": [block.model_dump() for block in response.content],
+                        "usage": {
+                            "input_tokens": response.usage.input_tokens,
+                            "output_tokens": response.usage.output_tokens,
+                        } if response.usage else None,
+                    }
+                    await conversation_store.update_api_request_response(
+                        conversation_id=current_conversation_id,
+                        iteration=iteration,
+                        response_data=response_data,
+                    )
+                    logger.debug(f"[Loop] API response logged for iteration {iteration}")
+                except Exception as e:
+                    logger.warning(f"[Loop] Failed to log API response: {e}")
+
+                logger.debug(f"[Loop] Response stop_reason: {response.stop_reason}")
+                logger.debug(f"[Loop] Response content blocks: {len(response.content)}")
+
+                response_params = _response_to_params(response)
+                response_message: BetaMessageParam = {
+                    "role": "assistant",
+                    "content": response_params,
+                }
+                messages.append(response_message)
+
+                if current_conversation_id is not None:
+                    logger.debug(f"[Loop] Storing assistant message to DB")
+                    try:
+                        await conversation_store.store_message(
+                            conversation_id=current_conversation_id,
+                            role="assistant",
+                            content=json.dumps(response_params),
+                            tool_id="response",
+                            raw_content=json.dumps(response_message),
+                        )
+                        logger.debug(f"[Loop] Assistant message stored successfully")
+                    except Exception as e:
+                        logger.exception(f"[Loop] Failed to store assistant message: {e}")
+
+                tool_result_content: list[BetaToolResultBlockParam] = []
+                for content_block in response_params:
+                    output_callback(content_block)
+
+                    if (
+                        isinstance(content_block, dict)
+                        and content_block.get("type") == "tool_use"
+                    ):
+                        # Type narrowing for tool use blocks
+                        tool_use_block = cast(BetaToolUseBlockParam, content_block)
+                        tool_name = tool_use_block.get("name", "unknown")
+                        tool_input = cast(dict[str, Any], tool_use_block.get("input", {}))
+
+                        await heartbeat_tracker.beat(f"executing_tool:{tool_name}")
+
+                        logger.info(f"[Loop] Executing tool: {tool_use_block['name']}")
+                        logger.debug(f"[Loop] Tool input: {tool_use_block.get('input', {})}")
+
+                        try:
+                            result = await tool_collection.run(
+                                name=tool_use_block["name"],
+                                tool_input=tool_input,
+                            )
+
+                            # --- NEW INTERRUPTION CHECK ---
+                            # If the tool realized we are cancelled, it returns this string.
+                            # We break the loop so the `finally` block runs and saves the log.
+                            if result.output == "CANCELLED_BY_USER":
+                                logger.info("[Loop] Tool detected cancellation signal. Exiting.")
+                                # We set status so the finally block logs it correctly
+                                final_status = "cancelled"
+                                break 
+                            # ------------------------------
+                        except Exception as tool_error:
+                            # Don't crash the loop - return error to Claude so it can retry
+                            logger.error(f"[Loop] Tool execution error: {tool_error}")
+                            result = ToolResult(error=f"Tool execution failed: {str(tool_error)}")
+                        
+                        tool_result_content.append(
+                            _make_api_tool_result(result, tool_use_block["id"])
+                        )
+                        tool_output_callback(result, tool_use_block["id"])
+
+                await heartbeat_tracker.beat("iteration_complete")
+
+                if not tool_result_content:
+                    logger.info(f"[Loop] No tool calls, task complete!")
+
+                    if not prompted_for_log:
+                        # First time seeing no tool calls - prompt agent to log
+                        prompted_for_log = True
+                        logger.info("[Loop] Prompting agent to update project memory before completion")
+                        
+                        timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M")
+                        log_prompt_text = LOG_COMPLETION_MESSAGE.format(
+                            status_path=PROJECT_STATUS_PATH,
+                            log_path=PROJECT_LOG_PATH,
+                            timestamp=timestamp,
+                        )
+                        
+                        log_prompt: BetaMessageParam = {
+                            "role": "user",
+                            "content": [{"type": "text", "text": log_prompt_text}]
+                        }
+                        messages.append(log_prompt)
+
+                        if current_conversation_id is not None:
+                            try:
+                                await conversation_store.store_message(
+                                    conversation_id=current_conversation_id,
+                                    role="user",
+                                    content=json.dumps(log_prompt["content"]),
+                                    raw_content=json.dumps(log_prompt),
+                                    tool_id="system-log-prompt",
+                                )
+                            except Exception as e:
+                                logger.exception(f"[Loop] Failed to store log prompt: {e}")
+                        
+                        # Continue to next iteration to let agent respond
+                        continue
+                    
+                    # Already prompted - agent is truly done
+                    logger.info(f"[Loop] No tool calls after log prompt, task complete!")
+                    final_status = "completed"
+
+                    if current_conversation_id is not None:
+                        await conversation_store.update_status(
+                            current_conversation_id,
+                            "completed",
+                            "Task finished successfully without further tool use.",
+                        )
+                        await conversation_store.mark_completed(current_conversation_id)
+                    
                     return messages, current_conversation_id
 
-            result_message: BetaMessageParam = {
-                "role": "user",
-                "content": tool_result_content,
-            }
+                result_message: BetaMessageParam = {
+                    "role": "user",
+                    "content": tool_result_content,
+                }
 
-            if current_conversation_id is not None:
-                logger.debug(f"[Loop] Storing tool results to DB")
+                if current_conversation_id is not None:
+                    logger.debug(f"[Loop] Storing tool results to DB")
+                    try:
+                        await conversation_store.store_message(
+                            conversation_id=current_conversation_id,
+                            role="tool",
+                            content=json.dumps(tool_result_content),
+                            tool_id="response",
+                            raw_content=json.dumps(result_message),
+                        )
+                    except Exception as e:
+                        logger.exception(f"[Loop] Failed to store tool results: {e}")
+
+                messages.append(result_message)
+                logger.debug(f"[Loop] Continuing to next iteration...")
+
+            except (APIStatusError, APIResponseValidationError) as e:
+                error_message = f"API Error: {e}"
+                logger.exception(f"[Loop] {error_message}")
+                await conversation_store.update_status(
+                    current_conversation_id, "failed", error_message
+                )
+                api_response_callback(e.request, e.response, e)
+                return messages, current_conversation_id
+            except APIError as e:
+                error_message = f"API Error: {e}"
+                logger.exception(f"[Loop] {error_message}")
+                await conversation_store.update_status(
+                    current_conversation_id, "failed", error_message
+                )
+                api_response_callback(e.request, e.body, e)
+                return messages, current_conversation_id
+            except Exception as e:
+                error_message = f"An unexpected error occurred: {e}"
+                logger.exception(f"[Loop] {error_message}")
                 try:
+                    # Update status
+                    await conversation_store.update_status(
+                        current_conversation_id, "failed", error_message
+                    )
+                    
+                    # Store the error as a message so user can see what happened
                     await conversation_store.store_message(
                         conversation_id=current_conversation_id,
-                        role="tool",
-                        content=json.dumps(tool_result_content),
-                        tool_id="response",
-                        raw_content=json.dumps(result_message),
+                        role="system",
+                        content=json.dumps([{"type": "error", "text": error_message}]),
+                        raw_content=json.dumps({"role": "system", "content": error_message}),
+                        tool_id="system-error",
+                        is_error=True,
                     )
-                except Exception as e:
-                    logger.exception(f"[Loop] Failed to store tool results: {e}")
-
-            messages.append(result_message)
-            logger.debug(f"[Loop] Continuing to next iteration...")
-
-        except (APIStatusError, APIResponseValidationError) as e:
-            error_message = f"API Error: {e}"
-            logger.exception(f"[Loop] {error_message}")
-            await _update_status(
-                conversation_store, current_conversation_id, "failed", error_message
-            )
-            api_response_callback(e.request, e.response, e)
-            return messages, current_conversation_id
-        except APIError as e:
-            error_message = f"API Error: {e}"
-            logger.exception(f"[Loop] {error_message}")
-            await _update_status(
-                conversation_store, current_conversation_id, "failed", error_message
-            )
-            api_response_callback(e.request, e.body, e)
-            return messages, current_conversation_id
-        except Exception as e:
-            error_message = f"An unexpected error occurred: {e}"
-            logger.exception(f"[Loop] {error_message}")
-            try:
-                # Update status
-                await _update_status(
-                    conversation_store, current_conversation_id, "failed", error_message
-                )
+                except Exception as status_error:
+                    logger.error(f"[Loop] Failed to update status/store error: {status_error}")
                 
-                # Store the error as a message so user can see what happened
-                await conversation_store.store_message(
-                    conversation_id=current_conversation_id,
-                    role="system",
-                    content=json.dumps([{"type": "error", "text": error_message}]),
-                    raw_content=json.dumps({"role": "system", "content": error_message}),
-                    tool_id="system-error",
-                    is_error=True,
-                )
-            except Exception as status_error:
-                logger.error(f"[Loop] Failed to update status/store error: {status_error}")
-            
-            return messages, current_conversation_id
-
+                return messages, current_conversation_id
+    finally:
+        # === ALWAYS UPDATE PROJECT MEMORY ON EXIT ===
+        logger.info(f"[Loop] Finally block - exit status: {final_status}")
+        
+        # Update status file if abnormal exit
+        _update_status_file_on_exit(final_status, agent_name)
+        
+        # Append to log file
+        _append_system_log_entry(final_status, agent_name)
 
 def _maybe_filter_to_n_most_recent_images(
     messages: list[BetaMessageParam],

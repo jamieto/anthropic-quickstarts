@@ -213,6 +213,7 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                 # 5. Poll for completion
                 logger.info(f"[SubAgentTool] Polling for completion (timeout: {timeout_minutes} min)...")
                 final_result = await self._poll_for_completion(
+                    session_id=session_id,
                     conversation_id=sub_conversation_id,
                     timeout_minutes=timeout_minutes
                 )
@@ -221,15 +222,26 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                 if final_result is None:
                     # CLEANUP: Timeout
                     logger.warning(f"[SubAgentTool] Sub-agent timed out")
-                    await self._cleanup_session(session_id, sub_conversation_id, f"Timed out after {timeout_minutes} minutes")
+                    asyncio.create_task(self._cleanup_session(session_id, sub_conversation_id, f"Timed out after {timeout_minutes} minutes")) # Fire-and-forget
                     return ToolResult(
                         output=f"Sub-agent '{agent_name}' timed out after {timeout_minutes} minutes. Check /home/computeruse/project/ for partial results.",
                         system=f"Sub-agent {agent_name} timed out"
                     )
                 
+                # 7. NEW: Handle Cancellation Signal
+                if final_result == "CANCELLED_BY_USER":
+                    # Cleanup was already done inside _poll_for_completion
+                    logger.info(f"[SubAgentTool] Passing cancellation signal to parent loop")
+                    # We return the EXACT string the parent loop.py is looking for
+                    return ToolResult(
+                        output="CANCELLED_BY_USER", 
+                        system="The user cancelled the operation."
+                    )
+                
                 # CLEANUP: Success - just delete pod, status already set by sub-agent
                 logger.info(f"[SubAgentTool] Sub-agent completed")
-                await self._cleanup_session(session_id)
+                # await self._cleanup_session(session_id)
+                asyncio.create_task(self._cleanup_session(session_id)) # Fire-and-forget
                 
                 return ToolResult(
                     output=f"""Sub-agent '{agent_name}' completed their task.
@@ -308,6 +320,7 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
     
     async def _poll_for_completion(
         self, 
+        session_id: str,
         conversation_id: int, 
         timeout_minutes: int
     ) -> Optional[str]:
@@ -319,6 +332,25 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
         async with httpx.AsyncClient() as client:
             while (time.time() - start) < timeout_seconds:
                 try:
+                    # 1. CHECK MY OWN STATUS (The Parent)
+                    # We ask the broker: "Am I still supposed to be running?"
+                    # You passed self.my_conversation_id in __init__
+                    if self.my_conversation_id:
+                        my_status_resp = await client.get(
+                            f"{self.broker_url}/conversations/{self.my_conversation_id}",
+                            headers={"X-Broker-Token": self.broker_token},
+                            timeout=5
+                        )
+                        if my_status_resp.is_success:
+                            my_data = my_status_resp.json()
+                            if my_data.get("status") in ["stopping", "cancelled", "paused"]:
+                                logger.info(f"[SubAgentTool] I (Parent) have been cancelled! Stopping wait for child.")
+                                
+                                # Optional: Be polite and kill the child too
+                                await self._cleanup_session(session_id=session_id, conversation_id=conversation_id, reason="Parent cancelled")
+                                return "CANCELLED_BY_USER"
+
+
                     response = await client.get(
                         f"{self.broker_url}/conversations/{conversation_id}",
                         headers={"X-Broker-Token": self.broker_token},

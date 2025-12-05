@@ -64,6 +64,14 @@ class EditTool20250124(BaseAnthropicTool):
                 file_text = ""
             self.write_file(_path, file_text)
             self._file_history[_path].append(file_text)
+
+            if not file_text:
+                return ToolResult(
+                    output=f"File created successfully at: {_path}\n\n"
+                        f"⚠️ Note: File was created empty. To add content, use the 'insert' command:\n"
+                        f"{{\"command\": \"insert\", \"path\": \"{_path}\", \"insert_line\": 0, \"new_str\": \"your content here\"}}"
+                )
+
             return ToolResult(output=f"File created successfully at: {_path}")
         elif command == "str_replace":
             if old_str is None:
@@ -160,6 +168,15 @@ class EditTool20250124(BaseAnthropicTool):
 
     def str_replace(self, path: Path, old_str: str, new_str: str | None):
         """Implement the str_replace command, which replaces old_str with new_str in the file content"""
+
+        # Validate old_str is not empty
+        if not old_str:
+            raise ToolError(
+                "Parameter `old_str` cannot be empty. To add content to an existing file, "
+                "use 'insert' command with insert_line parameter. To create a new file with "
+                "content, use 'create' command with file_text parameter."
+            )
+
         # Read the file content
         file_content = self.read_file(path).expandtabs()
         old_str = old_str.expandtabs()
@@ -337,6 +354,14 @@ class EditTool20250429(BaseAnthropicTool):
                 file_text = ""
             self.write_file(_path, file_text)
             self._file_history[_path].append(file_text)
+
+            if not file_text:
+                return ToolResult(
+                    output=f"File created successfully at: {_path}\n\n"
+                        f"⚠️ Note: File was created empty. To add content, use the 'insert' command:\n"
+                        f"{{\"command\": \"insert\", \"path\": \"{_path}\", \"insert_line\": 0, \"new_str\": \"your content here\"}}"
+                )
+
             return ToolResult(output=f"File created successfully at: {_path}")
         elif command == "str_replace":
             if old_str is None:

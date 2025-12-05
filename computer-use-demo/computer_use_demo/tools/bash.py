@@ -131,17 +131,26 @@ class BashTool20250124(BaseAnthropicTool):
             self._session = _BashSession()
             await self._session.start()
 
-            return ToolResult(system="tool has been restarted.")
+            return ToolResult(output="Bash session restarted successfully.")
 
         if self._session is None:
             self._session = _BashSession()
             await self._session.start()
 
-        if command is not None:
-            command = "pwd"
+        # Validate command is provided and not empty
+        if command is not None and command.strip():
             return await self._session.run(command)
 
-        raise ToolError("no command provided.")
+        # Better error message
+        raise ToolError(
+            'No command provided. You must include a "command" parameter.\n\n'
+            'CORRECT format:\n'
+            '{"name": "bash", "input": {"command": "your_command_here"}}\n\n'
+            'Examples:\n'
+            '- {"command": "ls -la /home/computeruse/project/"}\n'
+            '- {"command": "pwd"}\n'
+            '- {"command": "cat /path/to/file.txt"}'
+        )
 
 
 class BashTool20241022(BashTool20250124):
