@@ -45,6 +45,7 @@ from .tools import (
 )
 
 from .tools.subagent import SubAgentTool
+from .tools.credential_tool import CredentialsTool
 
 PROMPT_CACHING_BETA_FLAG = "prompt-caching-2024-07-31"
 
@@ -97,6 +98,129 @@ def _ensure_project_dir():
     project_dir = os.path.dirname(PROJECT_STATUS_PATH)
     if not os.path.exists(project_dir):
         os.makedirs(project_dir, exist_ok=True)
+
+def _get_deployment_info() -> str:
+    """Get deployment info from environment variables."""
+    app_url = os.getenv('APP_URL')
+    app_port = os.getenv('APP_PORT', '3000')
+    public_url = os.getenv('PUBLIC_URL')
+    
+    if not app_url:
+        return ""
+    
+    return f"""
+<USER_ACCESSIBLE_ENDPOINT>
+**MAKING THINGS ACCESSIBLE TO THE USER:**
+
+You can make any HTTP-based service accessible to the user via their browser!
+
+**Your Public Endpoint:** {app_url}
+**Port to bind:** {app_port}
+
+**How it works:**
+1. Start any HTTP server on port {app_port} (bind to 0.0.0.0)
+2. It becomes instantly accessible at {app_url}
+3. User can access it directly in their browser
+
+**COMMON USE CASES:**
+
+**Static Website / HTML Files:**
+```bash
+cd /home/computeruse/project/website
+python3 -m http.server {app_port} --bind 0.0.0.0 &
+echo "View at: {app_url}"
+```
+
+**File Download Server:**
+```bash
+cd /home/computeruse/project/outputs
+python3 -m http.server {app_port} --bind 0.0.0.0 &
+echo "Browse and download files at: {app_url}"
+```
+
+**Flask/FastAPI Application:**
+```bash
+cd /home/computeruse/project/app
+flask run --host=0.0.0.0 --port={app_port} &
+# or
+uvicorn main:app --host 0.0.0.0 --port {app_port} &
+echo "App running at: {app_url}"
+```
+
+**Node.js/Express:**
+```bash
+cd /home/computeruse/project/app
+PORT={app_port} node server.js &
+echo "Server running at: {app_url}"
+```
+
+**React/Vue/Vite Dev Server:**
+```bash
+cd /home/computeruse/project/frontend
+npm run dev -- --host 0.0.0.0 --port {app_port} &
+echo "Dev server at: {app_url}"
+```
+
+**Streamlit Dashboard:**
+```bash
+streamlit run dashboard.py --server.port {app_port} --server.address 0.0.0.0 &
+echo "Dashboard at: {app_url}"
+```
+
+**Jupyter Notebook:**
+```bash
+jupyter notebook --ip=0.0.0.0 --port={app_port} --no-browser --NotebookApp.token='' &
+echo "Jupyter at: {app_url}"
+```
+
+**API Server for Testing:**
+```bash
+cd /home/computeruse/project/api
+uvicorn main:app --host 0.0.0.0 --port {app_port} &
+echo "API docs at: {app_url}/docs"
+```
+
+**Documentation Site:**
+```bash
+cd /home/computeruse/project/docs
+mkdocs serve -a 0.0.0.0:{app_port} &
+# or
+docsify serve . -p {app_port} &
+echo "Docs at: {app_url}"
+```
+
+**IMPORTANT RULES:**
+- Always bind to `0.0.0.0` (NOT `localhost` or `127.0.0.1`)
+- Always use port `{app_port}`
+- Run with `&` to background the process
+- The endpoint is HTTPS and publicly accessible
+- WebSocket connections are supported
+
+**PATH HANDLING:**
+- Requests arrive with `/app` prefix stripped
+- User visits `{app_url}/page` → your server sees `/page`
+- Use RELATIVE paths for assets: `./style.css` not `/style.css`
+
+**WHEN TO USE THIS:**
+- User asks to "see", "view", "preview", or "access" something you built
+- User wants to interact with a web interface
+- User needs to download files from a directory
+- User wants to test an API you created
+- User asks to "deploy", "run", or "make it live"
+- Anytime browser access would be useful for the user
+
+**CHECKING IF SOMETHING IS ALREADY RUNNING:**
+```bash
+# See what's on port {app_port}
+lsof -i :{app_port}
+
+# Kill existing process if needed
+pkill -f "python.*{app_port}" 
+# or
+fuser -k {app_port}/tcp
+```
+</USER_ACCESSIBLE_ENDPOINT>
+"""
 
 # This system prompt is optimized for the Docker environment in this repository and
 # specific tool combinations enabled.
@@ -902,12 +1026,14 @@ async def sampling_loop(
     subagent_tool = SubAgentTool()
     tool_collection = ToolCollection(
         *(ToolCls() for ToolCls in tool_group.tools),
-        subagent_tool  # Include it during initialization
+        subagent_tool,  # Include it during initialization
+        CredentialsTool()  # Add CredentialsTool to the collection
     )
     logger.debug(f"[Loop] Tools loaded: {[t.name for t in tool_collection.tools]}")
     
     project_memory = _load_project_memory()
-    full_system_prompt = f"{SYSTEM_PROMPT}\n{project_memory}\n{system_prompt_suffix}"
+    deployment_info = _get_deployment_info()
+    full_system_prompt = f"{SYSTEM_PROMPT}\n{project_memory}\n{deployment_info}\n{system_prompt_suffix}"
 
     system = BetaTextBlockParam(
         type="text",
