@@ -116,109 +116,185 @@ You can make any HTTP-based service accessible to the user via their browser!
 
 **Your Public Endpoint:** {app_url}
 **Port to bind:** {app_port}
+**Base Path:** /webapp/
 
 **How it works:**
 1. Start any HTTP server on port {app_port} (bind to 0.0.0.0)
 2. It becomes instantly accessible at {app_url}
 3. User can access it directly in their browser
 
+**CRITICAL: BASE PATH HANDLING**
+
+Your app is served at `/webapp/` - NOT at the root `/`. This means:
+- User visits: `{app_url}/page` 
+- Your server receives: `/page` (prefix stripped)
+- But ALL links/assets in your HTML must account for the `/webapp/` base path!
+
+**THE PROBLEM:**
+```html
+<!-- WRONG - These will break! -->
+<a href="/about">About</a>           → goes to domain.com/about (404!)
+<img src="/images/logo.png">         → goes to domain.com/images/logo.png (404!)
+
+<!-- CORRECT - Use relative paths -->
+<a href="./about">About</a>          → goes to domain.com/webapp/about
+<img src="./images/logo.png">        → goes to domain.com/webapp/images/logo.png
+```
+
+**SOLUTION 1: Use HTML Base Tag (Recommended for static sites)**
+Add this to your HTML `<head>`:
+```html
+<head>
+    <base href="/webapp/">
+    <!-- Now all relative URLs resolve from /webapp/ -->
+</head>
+```
+
+**SOLUTION 2: Use Relative Paths**
+Always use `./` prefix for links and assets:
+```html
+<a href="./about">About</a>
+<link rel="stylesheet" href="./css/style.css">
+<script src="./js/app.js"></script>
+<img src="./images/logo.png">
+```
+
+**SOLUTION 3: Framework-Specific Configuration**
+
+**React (Create React App / Vite):**
+```javascript
+// vite.config.js
+export default defineConfig({{
+  base: '/webapp/',
+}})
+
+// Or for Create React App, set in package.json:
+// "homepage": "/webapp/"
+```
+
+**Vue:**
+```javascript
+// vite.config.js
+export default defineConfig({{
+  base: '/webapp/',
+}})
+```
+
+**Next.js:**
+```javascript
+// next.config.js
+module.exports = {{
+  basePath: '/webapp',
+  assetPrefix: '/webapp/',
+}}
+```
+
+**Svelte/SvelteKit:**
+```javascript
+// svelte.config.js
+export default {{
+  kit: {{
+    paths: {{
+      base: '/webapp'
+    }}
+  }}
+}}
+```
+
+**Flask:**
+```python
+from flask import Flask
+app = Flask(__name__)
+app.config['APPLICATION_ROOT'] = '/webapp'
+
+# Or use url_for() which handles this automatically
+```
+
+**Express.js:**
+```javascript
+const express = require('express');
+const app = express();
+
+// Mount everything under /webapp awareness
+app.use((req, res, next) => {{
+  res.locals.basePath = '/webapp';
+  next();
+}});
+```
+
+**SOLUTION 4: JavaScript Router Configuration**
+
+**React Router:**
+```javascript
+<BrowserRouter basename="/webapp">
+  <Routes>
+    <Route path="/" element={{<Home />}} />
+    <Route path="/about" element={{<About />}} />
+  </Routes>
+</BrowserRouter>
+```
+
+**Vue Router:**
+```javascript
+const router = createRouter({{
+  history: createWebHistory('/webapp/'),
+  routes: [...]
+}})
+```
+
+**IMPORTANT RULES:**
+1. ALWAYS use relative paths (`./`) or configure base path
+2. NEVER use absolute paths starting with `/` for internal links
+3. For static HTML sites, ALWAYS add `<base href="/webapp/">`
+4. For frameworks, ALWAYS configure the base path in the config
+5. Test navigation after deployment - click through all links!
+
+**CHECKLIST BEFORE DEPLOYMENT:**
+- [ ] HTML has `<base href="/webapp/">` OR framework base path configured
+- [ ] All `<a href>` links use relative paths or respect base
+- [ ] All `<img src>` use relative paths
+- [ ] All `<link href>` use relative paths  
+- [ ] All `<script src>` use relative paths
+- [ ] CSS `url()` references use relative paths
+- [ ] JavaScript fetch/API calls use relative paths
+- [ ] Router configured with base path (if using SPA)
+
+**QUICK TEST:**
+After starting your server, mentally trace each link:
+- Does `./about` resolve to `/webapp/about`? ✅
+- Does `/about` resolve to `/about`? ❌ (This is wrong!)
+
 **COMMON USE CASES:**
 
 **Static Website / HTML Files:**
 ```bash
+# Add base tag to all HTML files first!
 cd /home/computeruse/project/website
 python3 -m http.server {app_port} --bind 0.0.0.0 &
 echo "View at: {app_url}"
 ```
 
-**File Download Server:**
+**React/Vue/Vite Dev Server:**
 ```bash
-cd /home/computeruse/project/outputs
-python3 -m http.server {app_port} --bind 0.0.0.0 &
-echo "Browse and download files at: {app_url}"
+cd /home/computeruse/project/frontend
+# Make sure vite.config.js has base: '/webapp/'
+npm run dev -- --host 0.0.0.0 --port {app_port} &
+echo "Dev server at: {app_url}"
 ```
 
-**Flask/FastAPI Application:**
-```bash
-cd /home/computeruse/project/app
-flask run --host=0.0.0.0 --port={app_port} &
-# or
-uvicorn main:app --host 0.0.0.0 --port {app_port} &
-echo "App running at: {app_url}"
-```
-
-**Node.js/Express:**
+**Express/Node.js:**
 ```bash
 cd /home/computeruse/project/app
 PORT={app_port} node server.js &
 echo "Server running at: {app_url}"
 ```
 
-**React/Vue/Vite Dev Server:**
-```bash
-cd /home/computeruse/project/frontend
-npm run dev -- --host 0.0.0.0 --port {app_port} &
-echo "Dev server at: {app_url}"
-```
-
-**Streamlit Dashboard:**
-```bash
-streamlit run dashboard.py --server.port {app_port} --server.address 0.0.0.0 &
-echo "Dashboard at: {app_url}"
-```
-
-**Jupyter Notebook:**
-```bash
-jupyter notebook --ip=0.0.0.0 --port={app_port} --no-browser --NotebookApp.token='' &
-echo "Jupyter at: {app_url}"
-```
-
-**API Server for Testing:**
-```bash
-cd /home/computeruse/project/api
-uvicorn main:app --host 0.0.0.0 --port {app_port} &
-echo "API docs at: {app_url}/docs"
-```
-
-**Documentation Site:**
-```bash
-cd /home/computeruse/project/docs
-mkdocs serve -a 0.0.0.0:{app_port} &
-# or
-docsify serve . -p {app_port} &
-echo "Docs at: {app_url}"
-```
-
-**IMPORTANT RULES:**
-- Always bind to `0.0.0.0` (NOT `localhost` or `127.0.0.1`)
-- Always use port `{app_port}`
-- Run with `&` to background the process
-- The endpoint is HTTPS and publicly accessible
-- WebSocket connections are supported
-
-**PATH HANDLING:**
-- Requests arrive with `/app` prefix stripped
-- User visits `{app_url}/page` → your server sees `/page`
-- Use RELATIVE paths for assets: `./style.css` not `/style.css`
-
-**WHEN TO USE THIS:**
-- User asks to "see", "view", "preview", or "access" something you built
-- User wants to interact with a web interface
-- User needs to download files from a directory
-- User wants to test an API you created
-- User asks to "deploy", "run", or "make it live"
-- Anytime browser access would be useful for the user
-
-**CHECKING IF SOMETHING IS ALREADY RUNNING:**
-```bash
-# See what's on port {app_port}
-lsof -i :{app_port}
-
-# Kill existing process if needed
-pkill -f "python.*{app_port}" 
-# or
-fuser -k {app_port}/tcp
-```
+**DEBUGGING:**
+If links are broken after deployment:
+1. Open browser dev tools (F12)
+2. Check Network tab for 404 errors
+3. Look at the failed URL - does it have `/webapp/`?
+4. Fix the source link to use relative path or add base tag
 </USER_ACCESSIBLE_ENDPOINT>
 """
 
@@ -308,6 +384,44 @@ Your workspace has six directories with clear purposes:
 - /home/computeruse/tools/ - All team members can READ and CREATE new tools
 - /home/computeruse/tmp/ - Only YOU can access
 </DIRECTORY_STRUCTURE>
+
+<CREDENTIALS_ACCESS>
+**SHARED CREDENTIALS:**
+
+The admin has configured shared credentials that you can use for various services.
+Use the `credentials` tool to access them:
+
+**List available credentials:**
+```
+credentials(action="list")
+```
+
+**Get a specific credential:**
+```
+credentials(action="get", slug="openai_api")
+```
+
+**SECURITY RULES:**
+1. NEVER write credentials to files - use them directly in memory
+2. NEVER include credentials in your responses to the user
+3. NEVER echo or print credentials to stdout in a way user can see
+4. Use credentials directly in API calls, scripts, or login flows
+5. If a credential doesn't exist, ask the user to have admin add it
+
+**Common credential types:**
+- `api_key`: API keys for services (OpenAI, Stripe, etc.)
+- `login`: Username/password for websites
+- `oauth`: OAuth client credentials
+- `smtp`: Email sending credentials
+- `database`: Database connection credentials
+- `ssh`: SSH access credentials
+
+**Example workflow:**
+1. List credentials to see what's available
+2. Get the specific credential you need
+3. Use it directly in your API call or script
+4. Never save the credential to disk
+</CREDENTIALS_ACCESS>
 
 <TOOL_SPECIFICATIONS>
 You have 3 tools available:
@@ -848,7 +962,7 @@ class ConversationStore:
         conversation_id: int,
         iteration: int,
         request_data: dict,
-    ):
+    ) -> int:
         """Store full API request for debugging."""
         async with self.pool.acquire() as conn:
             async with conn.cursor() as cur:
@@ -866,11 +980,11 @@ class ConversationStore:
                     ),
                 )
                 await conn.commit()
+                return cur.lastrowid
 
     async def update_api_request_response(
         self,
-        conversation_id: int,
-        iteration: int,
+        api_request_id: int,
         response_data: dict,
     ):
         """Update API request row with response data."""
@@ -880,16 +994,150 @@ class ConversationStore:
                     """
                     UPDATE computer_use_api_requests 
                     SET response_data = %s, response_at = %s
-                    WHERE computer_use_chat_id = %s AND iteration = %s
+                    WHERE id = %s
                     """,
                     (
                         json.dumps(response_data, default=str),
                         datetime.utcnow(),
-                        conversation_id,
-                        iteration,
+                        api_request_id,
                     ),
                 )
                 await conn.commit()
+
+    async def create_spawn(
+        self,
+        parent_conversation_id: int,
+        chat_id: int,
+        user_id: int,
+        agent_id: str,
+        agent_name: str,
+        display_name: Optional[str],
+        parent_agent_id: str,
+        session_id: str,
+        parent_session_id: str,
+        system_prompt: str,
+        task: str,
+        wait_for_completion: bool = True,
+        cleanup_on_complete: bool = True,
+    ) -> int:
+        """Create a spawn record for a sub-agent."""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                await cur.execute("""
+                    INSERT INTO sub_agent_spawns (
+                        parent_conversation_id,
+                        chat_id,
+                        user_id,
+                        agent_id,
+                        agent_name,
+                        display_name,
+                        parent_agent_id,
+                        session_id,
+                        parent_session_id,
+                        system_prompt,
+                        task,
+                        wait_for_completion,
+                        cleanup_on_complete,
+                        status,
+                        created_at,
+                        updated_at
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """, (
+                    parent_conversation_id,
+                    chat_id,
+                    user_id,
+                    agent_id,
+                    agent_name,
+                    display_name,
+                    parent_agent_id,
+                    session_id,
+                    parent_session_id,
+                    system_prompt,
+                    task,
+                    wait_for_completion,
+                    cleanup_on_complete,
+                    "spawning",
+                    datetime.utcnow(),
+                    datetime.utcnow(),
+                ))
+                await conn.commit()
+                return cur.lastrowid
+    
+    async def update_spawn(
+        self,
+        spawn_id: int,
+        child_conversation_id: Optional[int] = None,
+        pod_name: Optional[str] = None,
+        status: Optional[str] = None,
+        result_summary: Optional[str] = None,
+        error_message: Optional[str] = None,
+        started_at: Optional[datetime] = None,
+        completed_at: Optional[datetime] = None,
+    ) -> None:
+        """Update a spawn record."""
+        updates = []
+        values = []
+        
+        if child_conversation_id is not None:
+            updates.append("child_conversation_id = %s")
+            values.append(child_conversation_id)
+        
+        if pod_name is not None:
+            updates.append("pod_name = %s")
+            values.append(pod_name)
+        
+        if status is not None:
+            updates.append("status = %s")
+            values.append(status)
+        
+        if result_summary is not None:
+            updates.append("result_summary = %s")
+            values.append(result_summary[:5000])  # Truncate if needed
+        
+        if error_message is not None:
+            updates.append("error_message = %s")
+            values.append(error_message[:2000])
+        
+        if started_at is not None:
+            updates.append("started_at = %s")
+            values.append(started_at)
+        
+        if completed_at is not None:
+            updates.append("completed_at = %s")
+            values.append(completed_at)
+        
+        if not updates:
+            return
+        
+        updates.append("updated_at = %s")
+        values.append(datetime.utcnow())
+        values.append(spawn_id)
+        
+        async with self.pool.acquire() as conn:
+            async with conn.cursor() as cur:
+                query = f"UPDATE sub_agent_spawns SET {', '.join(updates)} WHERE id = %s"
+                await cur.execute(query, tuple(values))
+                await conn.commit()
+    
+    async def get_spawn(self, spawn_id: int) -> Optional[dict]:
+        """Get a spawn record."""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT * FROM sub_agent_spawns WHERE id = %s",
+                    (spawn_id,)
+                )
+                return await cur.fetchone()
+    
+    async def get_spawns_for_chat(self, chat_id: int) -> list[dict]:
+        """Get all spawns for a chat."""
+        async with self.pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cur:
+                await cur.execute(
+                    "SELECT * FROM sub_agent_spawns WHERE chat_id = %s ORDER BY created_at ASC",
+                    (chat_id,)
+                )
+                return await cur.fetchall()
 
 def _update_status_file_on_exit(exit_status: str, agent_name: str = "Agent"):
     """Update the status file when agent exits abnormally."""
@@ -1012,6 +1260,9 @@ async def sampling_loop(
     token_efficient_tools_beta: bool = False,
     use_extended_context: bool = False,
     agent_name: str = "Agent", 
+    cleanup_on_complete: bool = True,
+    session_id: Optional[str] = None,
+    spawn_id: Optional[int] = None,
 ):
     """
     Agentic sampling loop for the assistant/tool interaction of computer use.
@@ -1019,6 +1270,11 @@ async def sampling_loop(
     logger.info(f"[Loop] Starting sampling_loop for conversation {current_conversation_id}")
     logger.info(f"[Loop] Model: {model}, Provider: {provider}")
     logger.debug(f"[Loop] Tool version: {tool_version}")
+    logger.info(f"[Loop] cleanup_on_complete={cleanup_on_complete}, session_id={session_id}")
+
+    # Get broker info for self-cleanup
+    broker_url = os.getenv("BROKER_URL", "http://broker:8001")
+    broker_token = os.getenv("BROKER_TOKEN", "")
 
     _ensure_project_dir()
 
@@ -1064,6 +1320,7 @@ async def sampling_loop(
 
     # Set the conversation ID on SubAgentTool so it can track hierarchy
     subagent_tool.my_conversation_id = current_conversation_id
+    subagent_tool.conversation_store = conversation_store
     logger.debug(f"[Loop] Set subagent_tool.my_conversation_id = {current_conversation_id}")
 
     iteration = 0
@@ -1173,6 +1430,8 @@ async def sampling_loop(
                     except Exception as e:
                         logger.exception(f"[Loop] Failed to store user message: {e}")
 
+            api_request_id: Optional[int] = None
+
             try:
                 request_data = {
                     "model": model,
@@ -1185,7 +1444,7 @@ async def sampling_loop(
                     "extra_body": extra_body,
                     "max_tokens": max_tokens,
                 }
-                await conversation_store.store_api_request(
+                api_request_id = await conversation_store.store_api_request(
                     conversation_id=current_conversation_id,
                     iteration=iteration,
                     request_data=request_data,
@@ -1244,8 +1503,7 @@ async def sampling_loop(
                         } if response.usage else None,
                     }
                     await conversation_store.update_api_request_response(
-                        conversation_id=current_conversation_id,
-                        iteration=iteration,
+                        api_request_id=api_request_id,
                         response_data=response_data,
                     )
                     logger.debug(f"[Loop] API response logged for iteration {iteration}")
@@ -1440,6 +1698,72 @@ async def sampling_loop(
         # Append to log file
         _append_system_log_entry(final_status, agent_name)
 
+        # ═══════════════════════════════════════════════════════════════
+        # Update spawn record if this is a sub-agent
+        # ═══════════════════════════════════════════════════════════════
+        if spawn_id and conversation_store:
+            try:
+                # Get the final response to use as result_summary
+                final_summary = None
+                if messages:
+                    # Get the last assistant message as summary
+                    for msg in reversed(messages):
+                        if msg.get("role") == "assistant":
+                            content = msg.get("content", [])
+                            if isinstance(content, list):
+                                for block in content:
+                                    if isinstance(block, dict) and block.get("type") == "text":
+                                        final_summary = block.get("text", "")[:5000]
+                                        break
+                            break
+                
+                # Map final_status to spawn status
+                spawn_status = {
+                    "completed": "completed",
+                    "cancelled": "cancelled",
+                    "paused": "cancelled",
+                    "failed": "failed",
+                }.get(final_status, "failed")
+                
+                await conversation_store.update_spawn(
+                    spawn_id,
+                    status=spawn_status,
+                    result_summary=final_summary,
+                    completed_at=datetime.utcnow(),
+                )
+                logger.info(f"[Loop] Updated spawn record {spawn_id} to {spawn_status}")
+            except Exception as e:
+                logger.error(f"[Loop] Failed to update spawn record: {e}")
+
+        if cleanup_on_complete and session_id:
+            logger.info(f"[Loop] Self-cleanup enabled, deleting session {session_id}")
+            await _self_cleanup(broker_url, broker_token, session_id, final_status)
+        else:
+            logger.info(f"[Loop] Self-cleanup disabled or no session_id, pod will stay running")
+
+async def _self_cleanup(broker_url: str, broker_token: str, session_id: str, reason: str):
+    """
+    Sub-agent cleans up its own pod by calling the broker.
+    This is fire-and-forget - we're about to terminate anyway.
+    """
+    try:
+        logger.info(f"[Loop] Requesting self-cleanup: {session_id}")
+        
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.delete(
+                f"{broker_url}/sessions/{session_id}",
+                headers={"X-Broker-Token": broker_token}
+            )
+            
+            if response.is_success:
+                logger.info(f"[Loop] Self-cleanup successful")
+            else:
+                logger.warning(f"[Loop] Self-cleanup failed: {response.status_code} - {response.text}")
+                
+    except Exception as e:
+        # Don't crash - we're cleaning up anyway
+        logger.warning(f"[Loop] Self-cleanup error (non-fatal): {e}")
+
 def _maybe_filter_to_n_most_recent_images(
     messages: list[BetaMessageParam],
     images_to_keep: int,
@@ -1508,7 +1832,12 @@ def _response_to_params(
                 res.append(cast(BetaContentBlockParam, thinking_block))
         else:
             # Handle tool use blocks normally
-            res.append(cast(BetaToolUseBlockParam, block.model_dump()))
+            res.append({
+                "type": "tool_use",
+                "id": block.id,
+                "name": block.name,
+                "input": block.input,
+            })
     return res
 
 

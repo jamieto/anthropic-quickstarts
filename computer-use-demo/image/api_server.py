@@ -51,6 +51,9 @@ class MessageRequest(BaseModel):
     use_extended_context: bool = False
     parent_chat_id: Optional[int] = None
     agent_name: Optional[str] = None
+    cleanup_on_complete: bool = True
+    session_id: Optional[str] = None
+    spawn_id: Optional[int] = None
 
 
 class MessageResponse(BaseModel):
@@ -156,6 +159,13 @@ async def process_message(request: MessageRequest):
 
         # Start the sampling loop as a background task
         logger.info(f"Spawning sampling_loop as background task...")
+
+        # Determine if this is a sub-agent or main orchestrator
+        is_sub_agent = request.parent_chat_id is not None
+
+        # Main orchestrator should NEVER self-cleanup - it waits for more prompts
+        # Sub-agents can self-cleanup based on the request
+        should_cleanup = request.cleanup_on_complete if is_sub_agent else False
         
         task = asyncio.create_task(
             run_sampling_loop_with_logging(
@@ -177,6 +187,10 @@ async def process_message(request: MessageRequest):
                 thinking_budget=4096,
                 token_efficient_tools_beta=False,
                 use_extended_context=request.use_extended_context,
+                agent_name=agent_name,
+                cleanup_on_complete=should_cleanup,
+                session_id=request.session_id or SESSION_ID,
+                spawn_id=request.spawn_id,
             )
         )
         

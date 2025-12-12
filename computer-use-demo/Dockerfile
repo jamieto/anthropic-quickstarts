@@ -112,7 +112,9 @@ RUN python -m pip install \
     psycopg2-binary \
     sqlalchemy \
     redis \
-    celery
+    celery \
+    pyotp \
+    httpx
 
 # only reinstall if requirements.txt changes
 COPY --chown=$USERNAME:$USERNAME computer_use_demo/requirements.txt $HOME/computer_use_demo/requirements.txt

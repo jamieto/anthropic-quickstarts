@@ -5,13 +5,17 @@ SubAgent Tool - Allows the agent to spawn other agents via the broker.
 import os
 import uuid
 import asyncio
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from venv import logger
 import httpx
+from datetime import datetime
 
 from .base import BaseAnthropicTool, ToolResult
 
+if TYPE_CHECKING:
+    from computer_use_demo.loop import ConversationStore
 
+    
 class SubAgentTool(BaseAnthropicTool):
     """
     Allows the main agent to spawn sub-agents by calling the broker.
@@ -32,6 +36,7 @@ class SubAgentTool(BaseAnthropicTool):
         # Set by sampling_loop when tool is initialized
         # This is the conversation_id in computer_use_chats table
         self.my_conversation_id: Optional[int] = None
+        self.conversation_store: Optional["ConversationStore"] = None
     
     def to_params(self) -> dict:
         return {
@@ -86,6 +91,15 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                         "description": "If true (default), wait for sub-agent to finish and return their result. If false, spawn and continue immediately (for parallel work).",
                         "default": True
                     },
+                    "cleanup_on_complete": {
+                        "type": "boolean",
+                        "description": """Whether to delete the sub-agent's pod after completion.
+- True (default): Pod deleted when done (saves resources)
+- False: Pod stays running (useful for VNC debugging)
+
+If wait_for_completion=false and cleanup_on_complete=true, sub-agent will self-terminate.""",
+                        "default": True
+                    },
                     "timeout_minutes": {
                         "type": "integer",
                         "description": "Max time to wait for completion (default: 30 minutes)",
@@ -103,6 +117,7 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
         system_prompt: str,
         task: str,
         wait_for_completion: bool = True,
+        cleanup_on_complete: bool = True,
         timeout_minutes: int = 30,
         **kwargs
     ) -> ToolResult:
@@ -112,11 +127,34 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
         session_id = f"chat-{self.chat_id}-sub-{agent_name}-{unique_id}"
         sub_agent_id = f"sub-{agent_name}-{unique_id}"
         sub_conversation_id = None  # Track this for cleanup
+        spawn_id = None
+
+        sub_agent_started = False
         
         logger.info(f"[SubAgentTool] Spawning sub-agent: {agent_name}")
         logger.info(f"[SubAgentTool] Session ID: {session_id}")
+        logger.info(f"[SubAgentTool] wait_for_completion={wait_for_completion}, cleanup_on_complete={cleanup_on_complete}")
         
         try:
+
+            if self.conversation_store:
+                spawn_id = await self.conversation_store.create_spawn(
+                    parent_conversation_id=self.my_conversation_id,
+                    chat_id=int(self.chat_id),
+                    user_id=int(self.user_id),
+                    agent_id=sub_agent_id,
+                    agent_name=agent_name,
+                    display_name=display_name,
+                    parent_agent_id=self.my_agent_id or "main-orchestrator",
+                    session_id=session_id,
+                    parent_session_id=self.my_session_id,
+                    system_prompt=system_prompt,
+                    task=task,
+                    wait_for_completion=wait_for_completion,
+                    cleanup_on_complete=cleanup_on_complete,
+                )
+                logger.info(f"[SubAgentTool] Created spawn record: {spawn_id}")
+
             async with httpx.AsyncClient(timeout=30) as client:
                 
                 # 1. Create session via broker
@@ -144,15 +182,20 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                 
                 session = response.json()
                 service_name = session["service_name"]
+                pod_name = session.get("pod_name")
                 internal_api_url = f"http://{service_name}.default.svc.cluster.local:8000"
                 
                 logger.info(f"[SubAgentTool] Internal API URL: {internal_api_url}")
+
+                if self.conversation_store and spawn_id:
+                    await self.conversation_store.update_spawn(spawn_id, pod_name=pod_name)
                 
                 # 2. Wait for pod to be ready
                 logger.info(f"[SubAgentTool] Waiting for pod to be ready...")
                 ready = await self._wait_for_ready(session_id, timeout_seconds=120)
                 if not ready:
                     # CLEANUP: Pod failed to start
+                    await self._update_spawn_failed(spawn_id, "Pod failed to start")
                     await self._cleanup_session(session_id, None, "Pod failed to start")
                     return ToolResult(error=f"Sub-agent '{agent_name}' pod failed to start within timeout")
                 
@@ -163,6 +206,7 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                 api_healthy = await self._wait_for_api_health(internal_api_url, timeout_seconds=60)
                 if not api_healthy:
                     # CLEANUP: API failed health check
+                    await self._update_spawn_failed(spawn_id, "API health check failed")
                     await self._cleanup_session(session_id, None, "API failed to become healthy")
                     return ToolResult(error=f"Sub-agent '{agent_name}' API failed to become healthy")
                 
@@ -176,26 +220,46 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                     json={
                         "message": task,
                         "system_prompt_suffix": system_prompt,
-                        "max_tokens": 8192,
+                        "max_tokens": 32768,
                         "parent_chat_id": self.my_conversation_id,
                         "agent_name": display_name,
+                        "cleanup_on_complete": cleanup_on_complete,
+                        "session_id": session_id,  # Sub-agent needs this to self-cleanup
+                        "spawn_id": spawn_id,
                     },
                     timeout=60
                 )
                 
                 if not task_response.is_success:
                     # CLEANUP: Failed to send task
+                    await self._update_spawn_failed(spawn_id, task_response.text)
                     await self._cleanup_session(session_id, None, f"Failed to send task: {task_response.text}")
                     return ToolResult(
                         error=f"Failed to send task to sub-agent: {task_response.text}"
                     )
                 
+                sub_agent_started = True
+                
                 result_data = task_response.json()
                 sub_conversation_id = result_data.get("conversation_id")
                 logger.info(f"[SubAgentTool] Sub-agent conversation ID: {sub_conversation_id}")
                 
+                if self.conversation_store and spawn_id:
+                    await self.conversation_store.update_spawn(
+                        spawn_id,
+                        child_conversation_id=sub_conversation_id,
+                        status="running",
+                        started_at=datetime.utcnow(),
+                    )
+
                 if not wait_for_completion:
                     # NOT WAITING: Don't cleanup - sub-agent is running independently
+                    cleanup_note = (
+                        "Pod will self-terminate when done." 
+                        if cleanup_on_complete 
+                        else "Pod will stay running. Access VNC or manually cleanup later."
+                    )
+
                     logger.info(f"[SubAgentTool] Not waiting for completion, returning immediately")
                     return ToolResult(
                         output=f"""Sub-agent '{agent_name}' spawned and working.
@@ -203,6 +267,7 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
     Session ID: {session_id}
     Conversation ID: {sub_conversation_id}
     VNC URL: {session.get('vnc_url', 'N/A')}
+    Cleanup: {cleanup_note}
 
     The sub-agent is now working independently. Since you chose not to wait:
     - They share your /home/computeruse/project/ workspace - check there for their work
@@ -222,7 +287,13 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                 if final_result is None:
                     # CLEANUP: Timeout
                     logger.warning(f"[SubAgentTool] Sub-agent timed out")
-                    asyncio.create_task(self._cleanup_session(session_id, sub_conversation_id, f"Timed out after {timeout_minutes} minutes")) # Fire-and-forget
+                    if cleanup_on_complete:
+                        asyncio.create_task(self._cleanup_session(session_id, sub_conversation_id, f"Timed out after {timeout_minutes} minutes")) # Fire-and-forget
+                        cleanup_msg = "Pod has been cleaned up."
+                    else:
+                        logger.info(f"[SubAgentTool] Leaving pod running for debugging (cleanup_on_complete=False)")
+                        cleanup_msg = f"Pod left running for debugging. VNC: {session.get('vnc_url', 'N/A')}"
+
                     return ToolResult(
                         output=f"Sub-agent '{agent_name}' timed out after {timeout_minutes} minutes. Check /home/computeruse/project/ for partial results.",
                         system=f"Sub-agent {agent_name} timed out"
@@ -233,6 +304,13 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                     # Cleanup was already done inside _poll_for_completion
                     logger.info(f"[SubAgentTool] Passing cancellation signal to parent loop")
                     # We return the EXACT string the parent loop.py is looking for
+                    if self.conversation_store and spawn_id:
+                        await self.conversation_store.update_spawn(
+                            spawn_id,
+                            status="cancelled",
+                            completed_at=datetime.utcnow(),
+                        )
+
                     return ToolResult(
                         output="CANCELLED_BY_USER", 
                         system="The user cancelled the operation."
@@ -240,8 +318,21 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
                 
                 # CLEANUP: Success - just delete pod, status already set by sub-agent
                 logger.info(f"[SubAgentTool] Sub-agent completed")
+                if self.conversation_store and spawn_id:
+                    await self.conversation_store.update_spawn(
+                        spawn_id,
+                        status="completed",
+                        result_summary=final_result,
+                        completed_at=datetime.utcnow(),
+                    )
+
                 # await self._cleanup_session(session_id)
-                asyncio.create_task(self._cleanup_session(session_id)) # Fire-and-forget
+                if cleanup_on_complete:
+                    asyncio.create_task(self._cleanup_session(session_id)) # Fire-and-forget
+                    cleanup_msg = "Pod has been cleaned up."
+                else:
+                    logger.info(f"[SubAgentTool] Pod left running for debugging (cleanup_on_complete=False)")
+                    cleanup_msg = f"Pod left running for debugging. VNC: {session.get('vnc_url', 'N/A')}"
                 
                 return ToolResult(
                     output=f"""Sub-agent '{agent_name}' completed their task.
@@ -257,16 +348,40 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
         except httpx.TimeoutException as e:
             # CLEANUP: HTTP timeout
             logger.exception(f"[SubAgentTool] Timeout: {e}")
-            await self._cleanup_session(session_id, sub_conversation_id, f"HTTP timeout: {e}")
-            return ToolResult(
-                error=f"Sub-agent '{agent_name}' request timed out"
-            )
+            await self._update_spawn_failed(spawn_id, f"Timeout: {e}")
+            if sub_agent_started and not cleanup_on_complete:
+                logger.info(f"[SubAgentTool] Leaving pod running for debugging (cleanup_on_complete=False)")
+                return ToolResult(
+                    error=f"Sub-agent '{agent_name}' request timed out. Pod left running for debugging. Session: {session_id}"
+                )
+            else:
+                await self._cleanup_session(session_id, sub_conversation_id, f"HTTP timeout: {e}")
+                return ToolResult(
+                    error=f"Sub-agent '{agent_name}' request timed out"
+                )
         except Exception as e:
             # CLEANUP: Unexpected error
             logger.exception(f"[SubAgentTool] Error: {e}")
-            await self._cleanup_session(session_id, sub_conversation_id, f"Failed: {str(e)}")
-            return ToolResult(
-                error=f"Sub-agent '{agent_name}' failed: {str(e)}"
+            await self._update_spawn_failed(spawn_id, str(e))
+            if sub_agent_started and not cleanup_on_complete:
+                logger.info(f"[SubAgentTool] Leaving pod running for debugging (cleanup_on_complete=False)")
+                return ToolResult(
+                    error=f"Sub-agent '{agent_name}' failed: {str(e)}. Pod left running for debugging. Session: {session_id}"
+                )
+            else:
+                await self._cleanup_session(session_id, sub_conversation_id, f"Failed: {str(e)}")
+                return ToolResult(
+                    error=f"Sub-agent '{agent_name}' failed: {str(e)}"
+                )
+            
+    async def _update_spawn_failed(self, spawn_id: Optional[int], error_message: str):
+        """Helper to mark spawn as failed."""
+        if self.conversation_store and spawn_id:
+            await self.conversation_store.update_spawn(
+                spawn_id,
+                status="failed",
+                error_message=error_message,
+                completed_at=datetime.utcnow(),
             )
     
     async def _wait_for_ready(self, session_id: str, timeout_seconds: int = 120) -> bool:
@@ -330,7 +445,8 @@ They can see /home/computeruse/project/ and /home/computeruse/uploads/ just like
         timeout_seconds = timeout_minutes * 60
         
         async with httpx.AsyncClient() as client:
-            while (time.time() - start) < timeout_seconds:
+            # while (time.time() - start) < timeout_seconds:
+            while True:
                 try:
                     # 1. CHECK MY OWN STATUS (The Parent)
                     # We ask the broker: "Am I still supposed to be running?"
