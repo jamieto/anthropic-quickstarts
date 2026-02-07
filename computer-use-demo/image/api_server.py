@@ -183,7 +183,7 @@ async def process_message(request: MessageRequest):
                 conversation_store=conversation_store,
                 current_conversation_id=current_conversation_id,
                 conversation_type="single",
-                tool_version="computer_use_20250124",
+                tool_version="computer_use_20251124",
                 thinking_budget=4096,
                 token_efficient_tools_beta=False,
                 use_extended_context=request.use_extended_context,
@@ -276,7 +276,7 @@ async def debug_env():
         "DB_HOST": os.getenv("AGENT_DB_HOST"),
         "DB_PORT": os.getenv("AGENT_DB_PORT"),
         "DB_NAME": os.getenv("AGENT_DB_NAME"),
-        "DB_USERNAME": os.getenv("AGENT_DB_USER"),
+        "DB_USER": os.getenv("AGENT_DB_USER"),
         "ANTHROPIC_API_KEY": "set" if os.getenv("ANTHROPIC_API_KEY") else "NOT SET",
     }
 
