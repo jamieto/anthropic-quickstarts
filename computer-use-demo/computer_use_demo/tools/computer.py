@@ -43,6 +43,8 @@ Action_20250124 = (
     ]
 )
 
+Action_20251124 = Action_20250124 | Literal["zoom"]
+
 ScrollDirection = Literal["up", "down", "left", "right"]
 
 
@@ -129,6 +131,7 @@ class BaseComputerTool:
         action: Action_20241022,
         text: str | None = None,
         coordinate: tuple[int, int] | None = None,
+        start_coordinate: tuple[int, int] | None = None,
         **kwargs,
     ):
         if action in ("mouse_move", "left_click_drag"):
@@ -137,16 +140,19 @@ class BaseComputerTool:
             if text is not None:
                 raise ToolError(f"text is not accepted for {action}")
 
-            x, y = self.validate_and_get_coordinates(coordinate)
-
-            if action == "mouse_move":
-                command_parts = [self.xdotool, f"mousemove --sync {x} {y}"]
-                return await self.shell(" ".join(command_parts))
-            elif action == "left_click_drag":
+            if action == "left_click_drag":
+                if start_coordinate is None:
+                    raise ToolError(f"start_coordinate is required for {action}")
+                start_x, start_y = self.validate_and_get_coordinates(start_coordinate)
+                end_x, end_y = self.validate_and_get_coordinates(coordinate)
                 command_parts = [
                     self.xdotool,
-                    f"mousedown 1 mousemove --sync {x} {y} mouseup 1",
+                    f"mousemove --sync {start_x} {start_y} mousedown 1 mousemove --sync {end_x} {end_y} mouseup 1",
                 ]
+                return await self.shell(" ".join(command_parts))
+            elif action == "mouse_move":
+                x, y = self.validate_and_get_coordinates(coordinate)
+                command_parts = [self.xdotool, f"mousemove --sync {x} {y}"]
                 return await self.shell(" ".join(command_parts))
 
         if action in ("key", "type"):
@@ -222,7 +228,7 @@ class BaseComputerTool:
     async def screenshot(self):
         """Take a screenshot of the current screen and return the base64 encoded image."""
         output_dir = Path(OUTPUT_DIR)
-        output_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(output_dir.mkdir, parents=True, exist_ok=True)
         path = output_dir / f"screenshot_{uuid4().hex}.png"
 
         # Try gnome-screenshot first
@@ -307,6 +313,7 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
         action: Action_20250124,
         text: str | None = None,
         coordinate: tuple[int, int] | None = None,
+        start_coordinate: tuple[int, int] | None = None,
         scroll_direction: ScrollDirection | None = None,
         scroll_amount: int | None = None,
         duration: int | float | None = None,
@@ -398,5 +405,86 @@ class ComputerTool20250124(BaseComputerTool, BaseAnthropicTool):
             return await self.shell(" ".join(command_parts))
 
         return await super().__call__(
-            action=action, text=text, coordinate=coordinate, key=key, **kwargs
+            action=action,
+            text=text,
+            coordinate=coordinate,
+            start_coordinate=start_coordinate,
+            key=key,
+            **kwargs,
+        )
+
+
+class ComputerTool20251124(ComputerTool20250124):
+    api_type: Literal["computer_20251124"] = "computer_20251124"  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    @property
+    def options(self) -> ComputerToolOptions:  # pyright: ignore[reportIncompatibleMethodOverride]
+        return {**super().options, "enable_zoom": True}  # pyright: ignore[reportReturnType]
+
+    async def __call__(
+        self,
+        *,
+        action: Action_20251124,
+        text: str | None = None,
+        coordinate: tuple[int, int] | None = None,
+        scroll_direction: ScrollDirection | None = None,
+        scroll_amount: int | None = None,
+        duration: int | float | None = None,
+        key: str | None = None,
+        region: tuple[int, int, int, int] | None = None,
+        **kwargs,
+    ):
+        if action == "zoom":
+            if (
+                region is None
+                or not isinstance(region, (list, tuple))
+                or len(region) != 4
+            ):
+                raise ToolError(
+                    f"{region=} must be a tuple of 4 coordinates (x0, y0, x1, y1)"
+                )
+            if not all(isinstance(c, int) and c >= 0 for c in region):
+                raise ToolError(f"{region=} must contain non-negative integers")
+
+            x0, y0, x1, y1 = region
+            # Scale coordinates from API space to screen space
+            x0, y0 = self.scale_coordinates(ScalingSource.API, x0, y0)
+            x1, y1 = self.scale_coordinates(ScalingSource.API, x1, y1)
+
+            # Take a screenshot and crop to the specified region
+            screenshot_result = await self.screenshot()
+            if not screenshot_result.base64_image:
+                raise ToolError("Failed to take screenshot for zoom")
+
+            # Crop the image using ImageMagick convert
+            output_dir = Path(OUTPUT_DIR)
+            temp_path = output_dir / f"screenshot_{uuid4().hex}.png"
+            cropped_path = output_dir / f"zoomed_{uuid4().hex}.png"
+
+            # Write the screenshot to a temp file
+            temp_path.write_bytes(base64.b64decode(screenshot_result.base64_image))
+
+            # Crop using ImageMagick: convert input -crop WxH+X+Y output
+            width = x1 - x0
+            height = y1 - y0
+            crop_cmd = f"convert {temp_path} -crop {width}x{height}+{x0}+{y0} +repage {cropped_path}"
+            await run(crop_cmd)
+
+            if cropped_path.exists():
+                cropped_base64 = base64.b64encode(cropped_path.read_bytes()).decode()
+                temp_path.unlink(missing_ok=True)
+                cropped_path.unlink(missing_ok=True)
+                return ToolResult(base64_image=cropped_base64)
+
+            raise ToolError("Failed to crop screenshot for zoom")
+
+        return await super().__call__(
+            action=action,
+            text=text,
+            coordinate=coordinate,
+            scroll_direction=scroll_direction,
+            scroll_amount=scroll_amount,
+            duration=duration,
+            key=key,
+            **kwargs,
         )
