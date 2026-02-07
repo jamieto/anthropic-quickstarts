@@ -273,10 +273,10 @@ async def debug_env():
         "CHAT_ID": os.getenv("CHAT_ID"),
         "SESSION_ID": os.getenv("SESSION_ID"),
         "AGENT_ID": os.getenv("AGENT_ID"),
-        "DB_HOST": os.getenv("DB_HOST"),
-        "DB_PORT": os.getenv("DB_PORT"),
-        "DB_NAME": os.getenv("DB_NAME"),
-        "DB_USER": os.getenv("DB_USER"),
+        "DB_HOST": os.getenv("AGENT_DB_HOST"),
+        "DB_PORT": os.getenv("AGENT_DB_PORT"),
+        "DB_NAME": os.getenv("AGENT_DB_NAME"),
+        "DB_USERNAME": os.getenv("AGENT_DB_USER"),
         "ANTHROPIC_API_KEY": "set" if os.getenv("ANTHROPIC_API_KEY") else "NOT SET",
     }
 

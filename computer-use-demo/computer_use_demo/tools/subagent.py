@@ -32,6 +32,8 @@ class SubAgentTool(BaseAnthropicTool):
         self.user_id = os.getenv("USER_ID")
         self.my_session_id = os.getenv("SESSION_ID")  # This pod's session ID
         self.my_agent_id = os.getenv("AGENT_ID")
+        self.agent_image = os.getenv("AGENT_IMAGE") or os.getenv("CURRENT_AGENT_IMAGE")
+
         
         # Set by sampling_loop when tool is initialized
         # This is the conversation_id in computer_use_chats table
@@ -159,18 +161,24 @@ If wait_for_completion=false and cleanup_on_complete=true, sub-agent will self-t
                 
                 # 1. Create session via broker
                 logger.info(f"[SubAgentTool] Creating session via broker...")
+
+                payload = {
+                    "session_id": session_id,
+                    "chat_id": self.chat_id,
+                    "user_id": self.user_id,
+                    "agent_id": sub_agent_id,
+                    "agent_name": agent_name,
+                    "parent_session_id": self.my_session_id,
+                }
+
+                if self.agent_image:
+                    payload["agent_image"] = self.agent_image
+
                 response = await client.post(
                     f"{self.broker_url}/sessions",
-                    json={
-                        "session_id": session_id,
-                        "chat_id": self.chat_id,
-                        "user_id": self.user_id,
-                        "agent_id": sub_agent_id,
-                        "agent_name": agent_name,
-                        "parent_session_id": self.my_session_id,
-                    },
+                    json=payload,
                     headers={"X-Broker-Token": self.broker_token}
-                )
+                )   
                 
                 if response.status_code == 409:
                     return ToolResult(error=f"Agent '{agent_name}' session already exists")

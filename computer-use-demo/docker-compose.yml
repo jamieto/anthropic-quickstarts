@@ -4,11 +4,11 @@ services:
     image: computer-use-demo:v2
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - DB_HOST=host.docker.internal
-      - DB_PORT=3306
-      - DB_USER=root
-      - DB_PASSWORD=
-      - DB_NAME=multiai
+      - AGENT_DB_HOST=host.docker.internal
+      - AGENT_DB_PORT=3306
+      - AGENT_DB_USER=root
+      - AGENT_DB_PASSWORD=
+      - AGENT_DB_NAME=multiai
     volumes:
       - ./computer_use_demo:/home/computeruse/computer_use_demo/
       - ../../../s3mount/files:/home/computeruse/files

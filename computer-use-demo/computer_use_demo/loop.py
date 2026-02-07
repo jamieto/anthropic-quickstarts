@@ -99,203 +99,1076 @@ def _ensure_project_dir():
     if not os.path.exists(project_dir):
         os.makedirs(project_dir, exist_ok=True)
 
-def _get_deployment_info() -> str:
-    """Get deployment info from environment variables."""
-    app_url = os.getenv('APP_URL')
-    app_port = os.getenv('APP_PORT', '3000')
-    public_url = os.getenv('PUBLIC_URL')
+# def _get_deployment_info() -> str:
+#     """Get deployment info from environment variables."""
+#     app_url = os.getenv('APP_URL')
+#     app_port = os.getenv('APP_PORT', '3000')
+#     public_url = os.getenv('PUBLIC_URL')
     
-    if not app_url:
-        return ""
+#     if not app_url:
+#         return ""
     
+#     return f"""
+# <USER_ACCESSIBLE_ENDPOINT>
+# **MAKING THINGS ACCESSIBLE TO THE USER:**
+
+# You can make any HTTP-based service accessible to the user via their browser!
+
+# **Your Public Endpoint:** {app_url}
+# **Port to bind:** {app_port}
+# **Base Path:** /webapp/
+
+# **How it works:**
+# 1. Start any HTTP server on port {app_port} (bind to 0.0.0.0)
+# 2. It becomes instantly accessible at {app_url}
+# 3. User can access it directly in their browser
+
+# **CRITICAL: BASE PATH HANDLING**
+
+# Your app is served at `/webapp/` - NOT at the root `/`. This means:
+# - User visits: `{app_url}/page` 
+# - Your server receives: `/page` (prefix stripped)
+# - But ALL links/assets in your HTML must account for the `/webapp/` base path!
+
+# **THE PROBLEM:**
+# ```html
+# <!-- WRONG - These will break! -->
+# <a href="/about">About</a>           → goes to domain.com/about (404!)
+# <img src="/images/logo.png">         → goes to domain.com/images/logo.png (404!)
+
+# <!-- CORRECT - Use relative paths -->
+# <a href="./about">About</a>          → goes to domain.com/webapp/about
+# <img src="./images/logo.png">        → goes to domain.com/webapp/images/logo.png
+# ```
+
+# **SOLUTION 1: Use HTML Base Tag (Recommended for static sites)**
+# Add this to your HTML `<head>`:
+# ```html
+# <head>
+#     <base href="/webapp/">
+#     <!-- Now all relative URLs resolve from /webapp/ -->
+# </head>
+# ```
+
+# **SOLUTION 2: Use Relative Paths**
+# Always use `./` prefix for links and assets:
+# ```html
+# <a href="./about">About</a>
+# <link rel="stylesheet" href="./css/style.css">
+# <script src="./js/app.js"></script>
+# <img src="./images/logo.png">
+# ```
+
+# **SOLUTION 3: Framework-Specific Configuration**
+
+# **React (Create React App / Vite):**
+# ```javascript
+# // vite.config.js
+# export default defineConfig({{
+#   base: '/webapp/',
+# }})
+
+# // Or for Create React App, set in package.json:
+# // "homepage": "/webapp/"
+# ```
+
+# **Vue:**
+# ```javascript
+# // vite.config.js
+# export default defineConfig({{
+#   base: '/webapp/',
+# }})
+# ```
+
+# **Next.js:**
+# ```javascript
+# // next.config.js
+# module.exports = {{
+#   basePath: '/webapp',
+#   assetPrefix: '/webapp/',
+# }}
+# ```
+
+# **Svelte/SvelteKit:**
+# ```javascript
+# // svelte.config.js
+# export default {{
+#   kit: {{
+#     paths: {{
+#       base: '/webapp'
+#     }}
+#   }}
+# }}
+# ```
+
+# **Flask:**
+# ```python
+# from flask import Flask
+# app = Flask(__name__)
+# app.config['APPLICATION_ROOT'] = '/webapp'
+
+# # Or use url_for() which handles this automatically
+# ```
+
+# **Express.js:**
+# ```javascript
+# const express = require('express');
+# const app = express();
+
+# // Mount everything under /webapp awareness
+# app.use((req, res, next) => {{
+#   res.locals.basePath = '/webapp';
+#   next();
+# }});
+# ```
+
+# **SOLUTION 4: JavaScript Router Configuration**
+
+# **React Router:**
+# ```javascript
+# <BrowserRouter basename="/webapp">
+#   <Routes>
+#     <Route path="/" element={{<Home />}} />
+#     <Route path="/about" element={{<About />}} />
+#   </Routes>
+# </BrowserRouter>
+# ```
+
+# **Vue Router:**
+# ```javascript
+# const router = createRouter({{
+#   history: createWebHistory('/webapp/'),
+#   routes: [...]
+# }})
+# ```
+
+# **IMPORTANT RULES:**
+# 1. ALWAYS use relative paths (`./`) or configure base path
+# 2. NEVER use absolute paths starting with `/` for internal links
+# 3. For static HTML sites, ALWAYS add `<base href="/webapp/">`
+# 4. For frameworks, ALWAYS configure the base path in the config
+# 5. Test navigation after deployment - click through all links!
+
+# **CHECKLIST BEFORE DEPLOYMENT:**
+# - [ ] HTML has `<base href="/webapp/">` OR framework base path configured
+# - [ ] All `<a href>` links use relative paths or respect base
+# - [ ] All `<img src>` use relative paths
+# - [ ] All `<link href>` use relative paths  
+# - [ ] All `<script src>` use relative paths
+# - [ ] CSS `url()` references use relative paths
+# - [ ] JavaScript fetch/API calls use relative paths
+# - [ ] Router configured with base path (if using SPA)
+
+# **QUICK TEST:**
+# After starting your server, mentally trace each link:
+# - Does `./about` resolve to `/webapp/about`? ✅
+# - Does `/about` resolve to `/about`? ❌ (This is wrong!)
+
+# **COMMON USE CASES:**
+
+# **Static Website / HTML Files:**
+# ```bash
+# # Add base tag to all HTML files first!
+# cd /home/computeruse/project/website
+# python3 -m http.server {app_port} --bind 0.0.0.0 &
+# echo "View at: {app_url}"
+# ```
+
+# **React/Vue/Vite Dev Server:**
+# ```bash
+# cd /home/computeruse/project/frontend
+# # Make sure vite.config.js has base: '/webapp/'
+# npm run dev -- --host 0.0.0.0 --port {app_port} &
+# echo "Dev server at: {app_url}"
+# ```
+
+# **Express/Node.js:**
+# ```bash
+# cd /home/computeruse/project/app
+# PORT={app_port} node server.js &
+# echo "Server running at: {app_url}"
+# ```
+
+# **DEBUGGING:**
+# If links are broken after deployment:
+# 1. Open browser dev tools (F12)
+# 2. Check Network tab for 404 errors
+# 3. Look at the failed URL - does it have `/webapp/`?
+# 4. Fix the source link to use relative path or add base tag
+# </USER_ACCESSIBLE_ENDPOINT>
+# """
+
+# Add near the top with other env vars
+PLATFORM_BROKER_URL = os.getenv('PLATFORM_BROKER_URL', 'http://platform-broker.default.svc.cluster.local')
+BUILD_BROKER_URL = os.getenv('BUILD_BROKER_URL', 'http://build-broker.default.svc.cluster.local:8002')
+AGENT_ID = os.getenv('AGENT_ID', 'unknown')
+CHAT_ID = os.getenv('CHAT_ID', 'unknown')
+
+def _get_deployment_capabilities() -> str:
+    """Get deployment/infrastructure provisioning instructions."""
     return f"""
-<USER_ACCESSIBLE_ENDPOINT>
-**MAKING THINGS ACCESSIBLE TO THE USER:**
+<INFRASTRUCTURE_PROVISIONING>
+**CREATING AND MANAGING DEPLOYMENTS (VCLUSTERS):**
 
-You can make any HTTP-based service accessible to the user via their browser!
+You can provision isolated Kubernetes environments (vclusters) for deploying applications.
+Deployment info is stored in shared directories so ALL agents can access it.
 
-**Your Public Endpoint:** {app_url}
-**Port to bind:** {app_port}
-**Base Path:** /webapp/
+**Platform Broker URL:** {PLATFORM_BROKER_URL}
+**Build Broker URL:** {BUILD_BROKER_URL}
 
-**How it works:**
-1. Start any HTTP server on port {app_port} (bind to 0.0.0.0)
-2. It becomes instantly accessible at {app_url}
-3. User can access it directly in their browser
+## SHARED DEPLOYMENT STORAGE
 
-**CRITICAL: BASE PATH HANDLING**
-
-Your app is served at `/webapp/` - NOT at the root `/`. This means:
-- User visits: `{app_url}/page` 
-- Your server receives: `/page` (prefix stripped)
-- But ALL links/assets in your HTML must account for the `/webapp/` base path!
-
-**THE PROBLEM:**
-```html
-<!-- WRONG - These will break! -->
-<a href="/about">About</a>           → goes to domain.com/about (404!)
-<img src="/images/logo.png">         → goes to domain.com/images/logo.png (404!)
-
-<!-- CORRECT - Use relative paths -->
-<a href="./about">About</a>          → goes to domain.com/webapp/about
-<img src="./images/logo.png">        → goes to domain.com/webapp/images/logo.png
+All deployment configurations are stored in the shared project directory:
+```
+/home/computeruse/project/.deployments/
+├── registry.json                    # List of all deployments
+├── v-abc123/
+│   ├── kubeconfig.yaml             # Kubernetes config  
+│   ├── config.json                 # Domain, DB, ECR info
+│   └── status.json                 # Current status
+└── v-def456/
+    └── ...
 ```
 
-**SOLUTION 1: Use HTML Base Tag (Recommended for static sites)**
-Add this to your HTML `<head>`:
-```html
-<head>
-    <base href="/webapp/">
-    <!-- Now all relative URLs resolve from /webapp/ -->
-</head>
+## BEFORE CREATING A NEW DEPLOYMENT
+
+**ALWAYS check for existing deployments first:**
+```bash
+# Check if deployments directory and registry exist
+DEPLOYMENTS_DIR="/home/computeruse/project/.deployments"
+
+if [ -f "$DEPLOYMENTS_DIR/registry.json" ]; then
+  echo "=== Existing Deployments ==="
+  cat "$DEPLOYMENTS_DIR/registry.json" | jq .
+  
+  # Get active deployment
+  ACTIVE_ID=$(cat "$DEPLOYMENTS_DIR/registry.json" | jq -r '.active // empty')
+  
+  if [ -n "$ACTIVE_ID" ]; then
+    echo ""
+    echo "Active deployment: $ACTIVE_ID"
+    echo "Loading it now..."
+    source "$DEPLOYMENTS_DIR/use-deployment.sh" "$ACTIVE_ID"
+  fi
+else
+  echo "No existing deployments found."
+fi
 ```
 
-**SOLUTION 2: Use Relative Paths**
-Always use `./` prefix for links and assets:
-```html
-<a href="./about">About</a>
-<link rel="stylesheet" href="./css/style.css">
-<script src="./js/app.js"></script>
-<img src="./images/logo.png">
-```
+## CREATING A NEW DEPLOYMENT (FULL SCRIPT)
 
-**SOLUTION 3: Framework-Specific Configuration**
+**Copy and run this entire script to create a new deployment:**
+```bash
+#!/bin/bash
+set -e
 
-**React (Create React App / Vite):**
-```javascript
-// vite.config.js
-export default defineConfig({{
-  base: '/webapp/',
-}})
+PLATFORM_BROKER_URL="{PLATFORM_BROKER_URL}"
+DEPLOYMENTS_DIR="/home/computeruse/project/.deployments"
+AGENT_ID="{AGENT_ID}"
+CHAT_ID="{CHAT_ID}"
 
-// Or for Create React App, set in package.json:
-// "homepage": "/webapp/"
-```
+echo "=== Creating New Deployment ==="
 
-**Vue:**
-```javascript
-// vite.config.js
-export default defineConfig({{
-  base: '/webapp/',
-}})
-```
+# Step 1: Create deployments directory
+mkdir -p "$DEPLOYMENTS_DIR"
 
-**Next.js:**
-```javascript
-// next.config.js
-module.exports = {{
-  basePath: '/webapp',
-  assetPrefix: '/webapp/',
+# Step 2: Request new deployment
+echo "Requesting deployment from Platform Broker..."
+CREATE_RESPONSE=$(curl -s -X POST "$PLATFORM_BROKER_URL/deployments" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"description": "Deployment for Chat '$CHAT_ID'"}}')
+
+echo "Response: $CREATE_RESPONSE"
+
+DEPLOYMENT_ID=$(echo "$CREATE_RESPONSE" | jq -r '.id')
+STATUS=$(echo "$CREATE_RESPONSE" | jq -r '.status')
+
+if [ -z "$DEPLOYMENT_ID" ] || [ "$DEPLOYMENT_ID" = "null" ]; then
+  echo "ERROR: Failed to create deployment"
+  echo "$CREATE_RESPONSE"
+  exit 1
+fi
+
+echo "Deployment ID: $DEPLOYMENT_ID"
+echo "Initial status: $STATUS"
+
+# Step 3: Create deployment directory
+mkdir -p "$DEPLOYMENTS_DIR/$DEPLOYMENT_ID"
+
+# Step 4: Poll until ready (timeout after 5 minutes)
+echo "Waiting for deployment to be ready..."
+TIMEOUT=300
+ELAPSED=0
+INTERVAL=10
+
+while [ $ELAPSED -lt $TIMEOUT ]; do
+  STATUS_RESPONSE=$(curl -s "$PLATFORM_BROKER_URL/deployments/$DEPLOYMENT_ID")
+  STATUS=$(echo "$STATUS_RESPONSE" | jq -r '.status')
+  
+  echo "  Status: $STATUS (elapsed: ${{ELAPSED}}s)"
+  
+  if [ "$STATUS" = "ready" ]; then
+    echo "Deployment is ready!"
+    ACCESS_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.access_token')
+    break
+  elif [ "$STATUS" = "failed" ]; then
+    echo "ERROR: Deployment failed!"
+    echo "$STATUS_RESPONSE" | jq .
+    exit 1
+  fi
+  
+  sleep $INTERVAL
+  ELAPSED=$((ELAPSED + INTERVAL))
+done
+
+if [ "$STATUS" != "ready" ]; then
+  echo "ERROR: Deployment timed out after ${{TIMEOUT}}s"
+  exit 1
+fi
+
+# Step 5: Get kubeconfig and credentials
+echo "Retrieving kubeconfig and credentials..."
+CREDS_RESPONSE=$(curl -s -X POST "$PLATFORM_BROKER_URL/deployments/$DEPLOYMENT_ID/kubeconfig" \\
+  -H "Authorization: Bearer $ACCESS_TOKEN")
+
+# Check if we got valid response
+if echo "$CREDS_RESPONSE" | jq -e '.kubeconfig' > /dev/null 2>&1; then
+  echo "Credentials retrieved successfully!"
+else
+  echo "ERROR: Failed to get credentials"
+  echo "$CREDS_RESPONSE"
+  exit 1
+fi
+
+# Step 6: Save kubeconfig (IMPORTANT: jq -r for proper YAML formatting)
+echo "$CREDS_RESPONSE" | jq -r '.kubeconfig' > "$DEPLOYMENTS_DIR/$DEPLOYMENT_ID/kubeconfig.yaml"
+echo "Saved: $DEPLOYMENTS_DIR/$DEPLOYMENT_ID/kubeconfig.yaml"
+
+# Step 7: Save config.json
+echo "$CREDS_RESPONSE" | jq '{{
+  deployment_id: .deployment_id,
+  domain: .domain,
+  wildcard_domain: .wildcard_domain,
+  base_domain: .base_domain,
+  database: .database,
+  ecr: .ecr,
+  efs: .efs,
+  infrastructure: .infrastructure
+}}' > "$DEPLOYMENTS_DIR/$DEPLOYMENT_ID/config.json"
+echo "Saved: $DEPLOYMENTS_DIR/$DEPLOYMENT_ID/config.json"
+
+# Step 8: Save status.json
+cat > "$DEPLOYMENTS_DIR/$DEPLOYMENT_ID/status.json" << EOF
+{{
+  "status": "ready",
+  "created_at": "$(date -Iseconds)",
+  "created_by": "$AGENT_ID"
 }}
+EOF
+echo "Saved: $DEPLOYMENTS_DIR/$DEPLOYMENT_ID/status.json"
+
+# Step 9: Update registry.json
+DOMAIN=$(echo "$CREDS_RESPONSE" | jq -r '.domain')
+
+if [ -f "$DEPLOYMENTS_DIR/registry.json" ]; then
+  # Update existing registry
+  TMP_FILE=$(mktemp)
+  cat "$DEPLOYMENTS_DIR/registry.json" | jq \\
+    --arg id "$DEPLOYMENT_ID" \\
+    --arg domain "$DOMAIN" \\
+    --arg created_by "$AGENT_ID" \\
+    '.deployments += [{{id: $id, domain: $domain, created_at: (now | todate), created_by: $created_by}}] | .active = $id' \\
+    > "$TMP_FILE" && mv "$TMP_FILE" "$DEPLOYMENTS_DIR/registry.json"
+else
+  # Create new registry
+  cat > "$DEPLOYMENTS_DIR/registry.json" << EOF
+{{
+  "active": "$DEPLOYMENT_ID",
+  "deployments": [
+    {{
+      "id": "$DEPLOYMENT_ID",
+      "domain": "$DOMAIN",
+      "created_at": "$(date -Iseconds)",
+      "created_by": "$AGENT_ID"
+    }}
+  ]
+}}
+EOF
+fi
+echo "Updated: $DEPLOYMENTS_DIR/registry.json"
+
+# Step 10: Create helper script (if not exists)
+if [ ! -f "$DEPLOYMENTS_DIR/use-deployment.sh" ]; then
+cat > "$DEPLOYMENTS_DIR/use-deployment.sh" << 'HELPER_SCRIPT'
+#!/bin/bash
+# Usage: source /home/computeruse/project/.deployments/use-deployment.sh [deployment_id]
+
+DEPLOYMENTS_DIR="/home/computeruse/project/.deployments"
+
+# Get deployment ID from argument or active deployment
+if [ -n "$1" ]; then
+  DEPLOYMENT_ID="$1"
+else
+  if [ -f "$DEPLOYMENTS_DIR/registry.json" ]; then
+    DEPLOYMENT_ID=$(cat "$DEPLOYMENTS_DIR/registry.json" | jq -r '.active // empty')
+  fi
+fi
+
+if [ -z "$DEPLOYMENT_ID" ]; then
+  echo "ERROR: No deployment specified and no active deployment found."
+  echo "Usage: source use-deployment.sh <deployment_id>"
+  return 1 2>/dev/null || exit 1
+fi
+
+CONFIG_FILE="$DEPLOYMENTS_DIR/$DEPLOYMENT_ID/config.json"
+KUBECONFIG_FILE="$DEPLOYMENTS_DIR/$DEPLOYMENT_ID/kubeconfig.yaml"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "ERROR: Deployment $DEPLOYMENT_ID not found at $CONFIG_FILE"
+  return 1 2>/dev/null || exit 1
+fi
+
+if [ ! -f "$KUBECONFIG_FILE" ]; then
+  echo "ERROR: Kubeconfig not found at $KUBECONFIG_FILE"
+  return 1 2>/dev/null || exit 1
+fi
+
+# Export KUBECONFIG
+export KUBECONFIG="$KUBECONFIG_FILE"
+
+# Export deployment variables
+export DEPLOYMENT_ID="$DEPLOYMENT_ID"
+export DEPLOY_DOMAIN=$(cat "$CONFIG_FILE" | jq -r '.domain')
+export DEPLOY_WILDCARD_DOMAIN=$(cat "$CONFIG_FILE" | jq -r '.wildcard_domain')
+export DEPLOY_BASE_DOMAIN=$(cat "$CONFIG_FILE" | jq -r '.base_domain')
+export DEPLOY_DB_HOST=$(cat "$CONFIG_FILE" | jq -r '.database.host')
+export DEPLOY_DB_PORT=$(cat "$CONFIG_FILE" | jq -r '.database.port')
+export DEPLOY_DB_NAME=$(cat "$CONFIG_FILE" | jq -r '.database.name')
+export DEPLOY_DB_USER=$(cat "$CONFIG_FILE" | jq -r '.database.username')
+export DEPLOY_DB_PASS=$(cat "$CONFIG_FILE" | jq -r '.database.password')
+export DEPLOY_ECR_REGISTRY=$(cat "$CONFIG_FILE" | jq -r '.ecr.registry')
+export DEPLOY_ECR_PREFIX=$(cat "$CONFIG_FILE" | jq -r '.ecr.prefix')
+export DEPLOY_ECR_REGION=$(cat "$CONFIG_FILE" | jq -r '.ecr.region')
+
+echo "════════════════════════════════════════════════════════════"
+echo "  DEPLOYMENT LOADED: $DEPLOYMENT_ID"
+echo "════════════════════════════════════════════════════════════"
+echo "  Domain:      https://$DEPLOY_DOMAIN"
+echo "  Database:    $DEPLOY_DB_NAME @ $DEPLOY_DB_HOST"
+echo "  ECR:         $DEPLOY_ECR_REGISTRY"
+echo "  KUBECONFIG:  $KUBECONFIG"
+echo "════════════════════════════════════════════════════════════"
+echo ""
+echo "Verify connection:"
+echo "  kubectl get pods"
+echo "  kubectl get secrets"
+echo ""
+HELPER_SCRIPT
+chmod +x "$DEPLOYMENTS_DIR/use-deployment.sh"
+echo "Created: $DEPLOYMENTS_DIR/use-deployment.sh"
+fi
+
+# Step 11: Load the deployment
+echo ""
+echo "=== Loading Deployment ==="
+source "$DEPLOYMENTS_DIR/use-deployment.sh" "$DEPLOYMENT_ID"
+
+# Step 12: Verify connection
+echo ""
+echo "=== Verifying Kubernetes Connection ==="
+if kubectl get pods 2>/dev/null; then
+  echo "✓ Connection successful!"
+else
+  echo "✗ Connection failed - kubeconfig may need refresh"
+fi
+
+echo ""
+echo "=== Deployment Complete ==="
+echo "Domain: https://$DEPLOY_DOMAIN"
+echo ""
+echo "To use this deployment later, run:"
+echo "  source /home/computeruse/project/.deployments/use-deployment.sh"
 ```
 
-**Svelte/SvelteKit:**
-```javascript
-// svelte.config.js
-export default {{
-  kit: {{
-    paths: {{
-      base: '/webapp'
-    }}
+## USING AN EXISTING DEPLOYMENT
+
+**Quick load (uses active deployment):**
+```bash
+source /home/computeruse/project/.deployments/use-deployment.sh
+```
+
+**Load specific deployment:**
+```bash
+source /home/computeruse/project/.deployments/use-deployment.sh v-6eac0f
+```
+
+**After loading, these variables are available:**
+- `$DEPLOYMENT_ID` - The deployment ID (e.g., v-6eac0f)
+- `$DEPLOY_DOMAIN` - Main domain (e.g., v-6eac0f.evolvesystem1.com)
+- `$DEPLOY_DB_HOST` - Database hostname
+- `$DEPLOY_DB_NAME` - Database name
+- `$DEPLOY_DB_USER` - Database username
+- `$DEPLOY_DB_PASS` - Database password
+- `$DEPLOY_ECR_REGISTRY` - ECR registry URL
+- `$KUBECONFIG` - Path to kubeconfig file
+
+---
+
+## BUILDING DOCKER IMAGES
+
+**Build Broker URL:** {BUILD_BROKER_URL}
+
+When you need to deploy an application, you must first build a Docker image using the Build Broker.
+The Build Broker uses Kaniko to build images inside the cluster (no Docker daemon needed).
+
+### BUILD DIRECTORY
+
+Put your source code and Dockerfile in: `/home/computeruse/build/`
+```
+/home/computeruse/build/
+├── Dockerfile
+├── src/
+│   └── ... your source code ...
+├── package.json (if Node.js)
+├── requirements.txt (if Python)
+└── ... other files ...
+```
+
+### COMPLETE BUILD WORKFLOW
+
+**Step 1: Prepare your application code**
+```bash
+# Create build directory
+mkdir -p /home/computeruse/build
+
+# Example: Create a simple Node.js app
+cat > /home/computeruse/build/package.json << 'EOF'
+{{
+  "name": "myapp",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {{
+    "start": "node server.js"
+  }},
+  "dependencies": {{
+    "express": "^4.18.2"
   }}
 }}
-```
+EOF
 
-**Flask:**
-```python
-from flask import Flask
-app = Flask(__name__)
-app.config['APPLICATION_ROOT'] = '/webapp'
-
-# Or use url_for() which handles this automatically
-```
-
-**Express.js:**
-```javascript
+cat > /home/computeruse/build/server.js << 'EOF'
 const express = require('express');
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Mount everything under /webapp awareness
-app.use((req, res, next) => {{
-  res.locals.basePath = '/webapp';
-  next();
+app.get('/', (req, res) => {{
+  res.json({{ message: 'Hello from MyApp!', timestamp: new Date() }});
 }});
+
+app.get('/health', (req, res) => {{
+  res.json({{ status: 'healthy' }});
+}});
+
+app.listen(PORT, '0.0.0.0', () => {{
+  console.log(`Server running on port ${{PORT}}`);
+}});
+EOF
 ```
 
-**SOLUTION 4: JavaScript Router Configuration**
-
-**React Router:**
-```javascript
-<BrowserRouter basename="/webapp">
-  <Routes>
-    <Route path="/" element={{<Home />}} />
-    <Route path="/about" element={{<About />}} />
-  </Routes>
-</BrowserRouter>
-```
-
-**Vue Router:**
-```javascript
-const router = createRouter({{
-  history: createWebHistory('/webapp/'),
-  routes: [...]
-}})
-```
-
-**IMPORTANT RULES:**
-1. ALWAYS use relative paths (`./`) or configure base path
-2. NEVER use absolute paths starting with `/` for internal links
-3. For static HTML sites, ALWAYS add `<base href="/webapp/">`
-4. For frameworks, ALWAYS configure the base path in the config
-5. Test navigation after deployment - click through all links!
-
-**CHECKLIST BEFORE DEPLOYMENT:**
-- [ ] HTML has `<base href="/webapp/">` OR framework base path configured
-- [ ] All `<a href>` links use relative paths or respect base
-- [ ] All `<img src>` use relative paths
-- [ ] All `<link href>` use relative paths  
-- [ ] All `<script src>` use relative paths
-- [ ] CSS `url()` references use relative paths
-- [ ] JavaScript fetch/API calls use relative paths
-- [ ] Router configured with base path (if using SPA)
-
-**QUICK TEST:**
-After starting your server, mentally trace each link:
-- Does `./about` resolve to `/webapp/about`? ✅
-- Does `/about` resolve to `/about`? ❌ (This is wrong!)
-
-**COMMON USE CASES:**
-
-**Static Website / HTML Files:**
+**Step 2: Create Dockerfile**
 ```bash
-# Add base tag to all HTML files first!
-cd /home/computeruse/project/website
-python3 -m http.server {app_port} --bind 0.0.0.0 &
-echo "View at: {app_url}"
+cat > /home/computeruse/build/Dockerfile << 'EOF'
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Copy package files
+COPY package*.json ./
+
+# Install dependencies
+RUN npm install --production
+
+# Copy source code
+COPY . .
+
+# Expose port
+EXPOSE 3000
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \\
+  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+
+# Start the app
+CMD ["npm", "start"]
+EOF
 ```
 
-**React/Vue/Vite Dev Server:**
+**Step 3: Build the image**
 ```bash
-cd /home/computeruse/project/frontend
-# Make sure vite.config.js has base: '/webapp/'
-npm run dev -- --host 0.0.0.0 --port {app_port} &
-echo "Dev server at: {app_url}"
+#!/bin/bash
+set -e
+
+BUILD_BROKER_URL="{BUILD_BROKER_URL}"
+APP_NAME="myapp"
+
+echo "=== Building Docker Image ==="
+
+# Trigger build
+# source_path must be "build" to match /home/computeruse/build/ however if you have multiple apps you can structure differently with subdirectories but it must start from "build" e.g. "source_path": "build/myapp"
+echo "Submitting build request..."
+BUILD_RESPONSE=$(curl -s -X POST "$BUILD_BROKER_URL/builds" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"name": "'$APP_NAME'", "source_path": "build"}}')
+
+echo "Response: $BUILD_RESPONSE"
+
+BUILD_ID=$(echo "$BUILD_RESPONSE" | jq -r '.build_id')
+
+if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+  echo "ERROR: Failed to start build"
+  echo "$BUILD_RESPONSE"
+  exit 1
+fi
+
+echo "Build ID: $BUILD_ID"
+
+# Poll until complete
+echo "Building image (this may take a few minutes)..."
+while true; do
+  BUILD_STATUS=$(curl -s "$BUILD_BROKER_URL/builds/$BUILD_ID")
+  STATUS=$(echo "$BUILD_STATUS" | jq -r '.status')
+  
+  echo "  Status: $STATUS"
+  
+  if [ "$STATUS" = "completed" ]; then
+    IMAGE_TAG=$(echo "$BUILD_STATUS" | jq -r '.image_tag')
+    echo ""
+    echo "✓ Build completed!"
+    echo "  Image: $IMAGE_TAG"
+    break
+  elif [ "$STATUS" = "failed" ]; then
+    echo ""
+    echo "✗ Build failed!"
+    echo "Logs:"
+    echo "$BUILD_STATUS" | jq -r '.logs'
+    exit 1
+  fi
+  
+  sleep 5
+done
+
+# Export for use in deployment
+export APP_IMAGE="$IMAGE_TAG"
+echo ""
+echo "Image ready: $APP_IMAGE"
 ```
 
-**Express/Node.js:**
+**Step 4: Deploy to Kubernetes**
 ```bash
-cd /home/computeruse/project/app
-PORT={app_port} node server.js &
-echo "Server running at: {app_url}"
+# Make sure deployment is loaded
+source /home/computeruse/project/.deployments/use-deployment.sh
+
+# Deploy the built image
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $APP_NAME
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: $APP_NAME
+  template:
+    metadata:
+      labels:
+        app: $APP_NAME
+    spec:
+      serviceAccountName: agent-s3-sa
+      containers:
+      - name: $APP_NAME
+        image: $APP_IMAGE
+        ports:
+        - containerPort: 3000
+        env:
+        - name: PORT
+          value: "3000"
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_HOST
+        - name: DB_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_DATABASE
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_PASSWORD
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3000
+          initialDelaySeconds: 15
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $APP_NAME
+spec:
+  selector:
+    app: $APP_NAME
+  ports:
+  - port: 80
+    targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: $APP_NAME-ingress
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - $DEPLOY_DOMAIN
+    secretName: wildcard-tls
+  rules:
+  - host: $DEPLOY_DOMAIN
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: $APP_NAME
+            port:
+              number: 80
+EOF
+
+echo ""
+echo "=== Deployment Complete ==="
+echo "Application URL: https://$DEPLOY_DOMAIN"
+echo ""
+echo "Check status:"
+echo "  kubectl get pods -l app=$APP_NAME"
+echo "  kubectl logs -l app=$APP_NAME"
 ```
 
-**DEBUGGING:**
-If links are broken after deployment:
-1. Open browser dev tools (F12)
-2. Check Network tab for 404 errors
-3. Look at the failed URL - does it have `/webapp/`?
-4. Fix the source link to use relative path or add base tag
-</USER_ACCESSIBLE_ENDPOINT>
+### FULL END-TO-END SCRIPT
+
+**Complete script to build and deploy an application:**
+```bash
+#!/bin/bash
+set -e
+
+# Configuration
+APP_NAME="myapp"
+BUILD_BROKER_URL="{BUILD_BROKER_URL}"
+DEPLOYMENTS_DIR="/home/computeruse/project/.deployments"
+
+echo "════════════════════════════════════════════════════════════"
+echo "  BUILD AND DEPLOY: $APP_NAME"
+echo "════════════════════════════════════════════════════════════"
+
+# Step 1: Check for existing deployment or create new one
+echo ""
+echo "=== Step 1: Checking Deployment ==="
+if [ -f "$DEPLOYMENTS_DIR/registry.json" ]; then
+  ACTIVE_ID=$(cat "$DEPLOYMENTS_DIR/registry.json" | jq -r '.active // empty')
+  if [ -n "$ACTIVE_ID" ]; then
+    echo "Using existing deployment: $ACTIVE_ID"
+    source "$DEPLOYMENTS_DIR/use-deployment.sh" "$ACTIVE_ID"
+  fi
+fi
+
+if [ -z "$DEPLOYMENT_ID" ]; then
+  echo "No deployment found. Please create one first:"
+  echo "  See: CREATING A NEW DEPLOYMENT section"
+  exit 1
+fi
+
+# Step 2: Verify build directory exists
+echo ""
+echo "=== Step 2: Checking Build Directory ==="
+if [ ! -f "/home/computeruse/build/Dockerfile" ]; then
+  echo "ERROR: No Dockerfile found in /home/computeruse/build/"
+  echo "Please create your application code and Dockerfile first."
+  exit 1
+fi
+echo "✓ Build directory ready"
+ls -la /home/computeruse/build/
+
+# Step 3: Build the image
+echo ""
+echo "=== Step 3: Building Docker Image ==="
+BUILD_RESPONSE=$(curl -s -X POST "$BUILD_BROKER_URL/builds" \\
+  -H "Content-Type: application/json" \\
+  -d '{{"name": "'$APP_NAME'", "source_path": "build"}}')
+
+BUILD_ID=$(echo "$BUILD_RESPONSE" | jq -r '.build_id')
+
+if [ -z "$BUILD_ID" ] || [ "$BUILD_ID" = "null" ]; then
+  echo "ERROR: Failed to start build"
+  echo "$BUILD_RESPONSE"
+  exit 1
+fi
+
+echo "Build ID: $BUILD_ID"
+echo "Building... (this may take a few minutes)"
+
+while true; do
+  BUILD_STATUS=$(curl -s "$BUILD_BROKER_URL/builds/$BUILD_ID")
+  STATUS=$(echo "$BUILD_STATUS" | jq -r '.status')
+  
+  if [ "$STATUS" = "completed" ]; then
+    APP_IMAGE=$(echo "$BUILD_STATUS" | jq -r '.image_tag')
+    echo "✓ Build completed: $APP_IMAGE"
+    break
+  elif [ "$STATUS" = "failed" ]; then
+    echo "✗ Build failed!"
+    echo "$BUILD_STATUS" | jq -r '.logs'
+    exit 1
+  fi
+  
+  echo "  Status: $STATUS"
+  sleep 5
+done
+
+# Step 4: Deploy to Kubernetes
+echo ""
+echo "=== Step 4: Deploying to Kubernetes ==="
+
+kubectl apply -f - <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: $APP_NAME
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: $APP_NAME
+  template:
+    metadata:
+      labels:
+        app: $APP_NAME
+    spec:
+      serviceAccountName: agent-s3-sa
+      containers:
+      - name: $APP_NAME
+        image: $APP_IMAGE
+        ports:
+        - containerPort: 3000
+        env:
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_HOST
+        - name: DB_DATABASE
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_DATABASE
+        - name: DB_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_USERNAME
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: DB_PASSWORD
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: $APP_NAME
+spec:
+  selector:
+    app: $APP_NAME
+  ports:
+  - port: 80
+    targetPort: 3000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: $APP_NAME-ingress
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - $DEPLOY_DOMAIN
+    secretName: wildcard-tls
+  rules:
+  - host: $DEPLOY_DOMAIN
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: $APP_NAME
+            port:
+              number: 80
+EOF
+
+# Step 5: Wait for rollout
+echo ""
+echo "=== Step 5: Waiting for Deployment ==="
+kubectl rollout status deployment/$APP_NAME --timeout=120s
+
+# Step 6: Show status
+echo ""
+echo "════════════════════════════════════════════════════════════"
+echo "  DEPLOYMENT SUCCESSFUL!"
+echo "════════════════════════════════════════════════════════════"
+echo ""
+echo "  Application URL: https://$DEPLOY_DOMAIN"
+echo "  Image: $APP_IMAGE"
+echo ""
+echo "  Commands:"
+echo "    kubectl get pods -l app=$APP_NAME"
+echo "    kubectl logs -l app=$APP_NAME -f"
+echo ""
+```
+
+### EXAMPLE DOCKERFILES
+
+**Python Flask:**
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 5000
+CMD ["python", "app.py"]
+```
+
+**Python FastAPI:**
+```dockerfile
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+**Node.js Express:**
+```dockerfile
+FROM node:20-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install --production
+COPY . .
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+**Go:**
+```dockerfile
+FROM golang:1.21-alpine AS builder
+WORKDIR /app
+COPY go.* ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o main .
+
+FROM alpine:3.18
+WORKDIR /app
+COPY --from=builder /app/main .
+EXPOSE 8080
+CMD ["./main"]
+```
+
+**Static Website (Nginx):**
+```dockerfile
+FROM nginx:alpine
+COPY . /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+```
+
+---
+
+## REFRESHING EXPIRED KUBECONFIG
+
+Kubeconfig tokens expire after ~1 hour. To refresh:
+```bash
+DEPLOYMENT_ID="v-6eac0f"  # Your deployment ID
+DEPLOYMENTS_DIR="/home/computeruse/project/.deployments"
+PLATFORM_BROKER_URL="{PLATFORM_BROKER_URL}"
+
+# Get fresh access token
+STATUS_RESPONSE=$(curl -s "$PLATFORM_BROKER_URL/deployments/$DEPLOYMENT_ID")
+ACCESS_TOKEN=$(echo "$STATUS_RESPONSE" | jq -r '.access_token')
+
+if [ -z "$ACCESS_TOKEN" ] || [ "$ACCESS_TOKEN" = "null" ]; then
+  echo "ERROR: Could not get access token. Deployment may not exist."
+  exit 1
+fi
+
+# Get fresh kubeconfig
+CREDS_RESPONSE=$(curl -s -X POST "$PLATFORM_BROKER_URL/deployments/$DEPLOYMENT_ID/kubeconfig" \\
+  -H "Authorization: Bearer $ACCESS_TOKEN")
+
+# Save it
+echo "$CREDS_RESPONSE" | jq -r '.kubeconfig' > "$DEPLOYMENTS_DIR/$DEPLOYMENT_ID/kubeconfig.yaml"
+
+echo "Kubeconfig refreshed!"
+
+# Reload deployment
+source "$DEPLOYMENTS_DIR/use-deployment.sh" "$DEPLOYMENT_ID"
+```
+
+## PRE-CREATED RESOURCES IN EACH VCLUSTER
+
+When you connect to a vcluster, these resources already exist:
+
+| Resource Type | Name | Description |
+|--------------|------|-------------|
+| Secret | `database-credentials` | DB_HOST, DB_PORT, DB_DATABASE, DB_USERNAME, DB_PASSWORD |
+| PVC | `efs-pvc` | Shared EFS storage |
+| ServiceAccount | `agent-s3-sa` | Has S3 access via IRSA |
+| Secret | `wildcard-tls` | TLS certificate for ingress |
+
+## IMPORTANT RULES
+
+1. **ALWAYS check for existing deployments** before creating new ones
+2. **ALWAYS use `jq -r`** when extracting kubeconfig (handles newlines properly)
+3. **Put build files in `/home/computeruse/build/`** - this is where the Build Broker looks
+4. **Access tokens expire in 5 minutes** - get kubeconfig promptly
+5. **Kubeconfig tokens expire in 1 hour** - refresh if kubectl fails
+6. **Use `source use-deployment.sh`** to load deployments (sets all variables)
+7. **All agents share** the `.deployments` directory - check what exists first
+</INFRASTRUCTURE_PROVISIONING>
 """
 
 # This system prompt is optimized for the Docker environment in this repository and
@@ -369,6 +1242,11 @@ Your workspace has six directories with clear purposes:
    - Ephemeral - cleared when session ends
    - Use for: downloads, temporary extractions, quick tests, packaging
    - Don't save important work here or work that can be used later as evidence or reference
+
+**/home/computeruse/build/** - BUILD CONTEXT
+   - Use this directory when building Docker images
+   - Put your Dockerfile and all source code here
+   - The Build Broker will look here to build images
 
 **WORKFLOW:**
 1. User uploads files → /home/computeruse/uploads/
@@ -805,11 +1683,11 @@ class ConversationStore:
         Create a ConversationStore instance with either provided parameters or environment variables.
         """
         connection_params = {
-            "host": host or os.getenv("DB_HOST", "localhost"),
-            "port": port or int(os.getenv("DB_PORT", "3306")),
-            "user": user or os.getenv("DB_USER", "root"),
-            "password": password or os.getenv("DB_PASSWORD", ""),
-            "db": db or os.getenv("DB_NAME", "multiai"),
+            "host": host or os.getenv("AGENT_DB_HOST", "localhost"),
+            "port": port or int(os.getenv("AGENT_DB_PORT", "3306")),
+            "user": user or os.getenv("AGENT_DB_USER", "root"),
+            "password": password or os.getenv("AGENT_DB_PASSWORD", ""),
+            "db": db or os.getenv("AGENT_DB_NAME", "multiai"),
             "autocommit": True,
         }
 
@@ -1288,7 +2166,7 @@ async def sampling_loop(
     logger.debug(f"[Loop] Tools loaded: {[t.name for t in tool_collection.tools]}")
     
     project_memory = _load_project_memory()
-    deployment_info = _get_deployment_info()
+    deployment_info = _get_deployment_capabilities()
     full_system_prompt = f"{SYSTEM_PROMPT}\n{project_memory}\n{deployment_info}\n{system_prompt_suffix}"
 
     system = BetaTextBlockParam(
